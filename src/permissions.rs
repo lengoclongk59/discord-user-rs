@@ -110,41 +110,15 @@ mod tests {
             id: id.to_string(),
             username: "test".to_string(),
             discriminator: "0000".to_string(),
-            global_name: None,
-            avatar: None,
-            avatar_decoration_data: None,
-            banner: None,
-            banner_color: None,
-            accent_color: None,
-            public_flags: Default::default(),
-            flags: Default::default(),
-            premium_type: 0,
-            bot: false,
-            bio: None,
-            email: None,
-            verified: false,
-            mfa_enabled: false,
-            phone: None,
-            nsfw_allowed: None,
-            mobile: false,
-            desktop: false,
+            ..Default::default()
         }
     }
 
     fn make_member(user_id: &str, roles: Vec<String>) -> Member {
         Member {
             user: Some(make_user(user_id)),
-            user_id: None,
-            nick: None,
-            avatar: None,
             roles,
-            joined_at: None,
-            premium_since: None,
-            deaf: false,
-            mute: false,
-            pending: false,
-            flags: 0,
-            communication_disabled_until: None,
+            ..Default::default()
         }
     }
 
@@ -171,18 +145,9 @@ mod tests {
             guild_id: Some(guild_id.to_string()),
             channel_type: ChannelType::GuildText,
             name: Some("general".to_string()),
-            topic: None,
-            nsfw: false,
             position: Some(0),
-            parent_id: None,
             permission_overwrites: overwrites,
-            user_limit: None,
-            rate_limit_per_user: None,
-            last_message_id: None,
-            bitrate: None,
-            recipients: vec![],
-            recipient_ids: vec![],
-            flags: 0,
+            ..Default::default()
         }
     }
 

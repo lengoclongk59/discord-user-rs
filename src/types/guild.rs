@@ -6,7 +6,7 @@ use super::User;
 use crate::ChannelType;
 
 /// Discord guild (server)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Guild {
     pub id: String,
     #[serde(default)]
@@ -14,13 +14,72 @@ pub struct Guild {
     #[serde(default)]
     pub icon: Option<String>,
     #[serde(default)]
+    pub icon_hash: Option<String>,
+    #[serde(default)]
     pub splash: Option<String>,
+    #[serde(default)]
+    pub discovery_splash: Option<String>,
     #[serde(default)]
     pub banner: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
+    pub owner: Option<bool>,
+    #[serde(default)]
     pub owner_id: Option<String>,
+    #[serde(default)]
+    pub permissions: Option<String>,
+    /// Voice region ID (deprecated; replaced by per-channel `rtc_region`).
+    #[serde(default)]
+    pub region: Option<String>,
+    #[serde(default)]
+    pub afk_channel_id: Option<String>,
+    #[serde(default)]
+    pub afk_timeout: Option<u64>,
+    #[serde(default)]
+    pub widget_enabled: Option<bool>,
+    #[serde(default)]
+    pub widget_channel_id: Option<String>,
+    #[serde(default)]
+    pub default_message_notifications: Option<u8>,
+    #[serde(default)]
+    pub explicit_content_filter: Option<u8>,
+    #[serde(default)]
+    pub mfa_level: Option<u8>,
+    #[serde(default)]
+    pub application_id: Option<String>,
+    #[serde(default)]
+    pub system_channel_id: Option<String>,
+    #[serde(default)]
+    pub system_channel_flags: Option<u64>,
+    #[serde(default)]
+    pub rules_channel_id: Option<String>,
+    #[serde(default)]
+    pub max_presences: Option<u64>,
+    #[serde(default)]
+    pub max_members: Option<u64>,
+    #[serde(default)]
+    pub vanity_url_code: Option<String>,
+    #[serde(default)]
+    pub preferred_locale: Option<String>,
+    #[serde(default)]
+    pub public_updates_channel_id: Option<String>,
+    #[serde(default)]
+    pub max_video_channel_users: Option<u64>,
+    #[serde(default)]
+    pub max_stage_video_channel_users: Option<u64>,
+    #[serde(default)]
+    pub approximate_member_count: Option<u64>,
+    #[serde(default)]
+    pub approximate_presence_count: Option<u64>,
+    #[serde(default)]
+    pub welcome_screen: Option<WelcomeScreen>,
+    #[serde(default)]
+    pub premium_progress_bar_enabled: Option<bool>,
+    #[serde(default)]
+    pub safety_alerts_channel_id: Option<String>,
+    #[serde(default)]
+    pub incidents_data: Option<IncidentsData>,
     #[serde(default)]
     pub member_count: Option<u32>,
     #[serde(default)]
@@ -49,6 +108,39 @@ pub struct Guild {
     pub large: bool,
     #[serde(default)]
     pub lazy: bool,
+}
+
+/// Welcome screen object — shown to new members when they join a Community guild.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WelcomeScreen {
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub welcome_channels: Vec<WelcomeChannel>,
+}
+
+/// A featured channel inside a [`WelcomeScreen`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WelcomeChannel {
+    pub channel_id: String,
+    pub description: String,
+    #[serde(default)]
+    pub emoji_id: Option<String>,
+    #[serde(default)]
+    pub emoji_name: Option<String>,
+}
+
+/// Guild incidents data — administrative pause flags / detection timestamps.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IncidentsData {
+    #[serde(default)]
+    pub invites_disabled_until: Option<String>,
+    #[serde(default)]
+    pub dms_disabled_until: Option<String>,
+    #[serde(default)]
+    pub dm_spam_detected_at: Option<String>,
+    #[serde(default)]
+    pub raid_detected_at: Option<String>,
 }
 
 impl Guild {
@@ -107,7 +199,7 @@ impl Guild {
 }
 
 /// Discord channel
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Channel {
     pub id: String,
     #[serde(default, rename = "type")]
@@ -140,6 +232,91 @@ pub struct Channel {
     pub recipient_ids: Vec<String>,
     #[serde(default)]
     pub flags: u32,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub owner_id: Option<String>,
+    #[serde(default)]
+    pub application_id: Option<String>,
+    #[serde(default)]
+    pub managed: Option<bool>,
+    #[serde(default)]
+    pub rtc_region: Option<String>,
+    #[serde(default)]
+    pub video_quality_mode: Option<u8>,
+    #[serde(default)]
+    pub message_count: Option<u64>,
+    #[serde(default)]
+    pub member_count: Option<u32>,
+    #[serde(default)]
+    pub thread_metadata: Option<ThreadMetadata>,
+    #[serde(default)]
+    pub member: Option<ThreadMember>,
+    #[serde(default)]
+    pub default_auto_archive_duration: Option<u32>,
+    #[serde(default)]
+    pub permissions: Option<String>,
+    #[serde(default)]
+    pub total_message_sent: Option<u64>,
+    #[serde(default)]
+    pub available_tags: Option<Vec<ForumTag>>,
+    #[serde(default)]
+    pub applied_tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub default_reaction_emoji: Option<DefaultReaction>,
+    #[serde(default)]
+    pub default_thread_rate_limit_per_user: Option<u64>,
+    #[serde(default)]
+    pub default_sort_order: Option<u8>,
+    #[serde(default)]
+    pub default_forum_layout: Option<u8>,
+}
+
+/// Metadata describing a thread channel's archival/lock state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadMetadata {
+    pub archived: bool,
+    pub auto_archive_duration: u32,
+    pub archive_timestamp: String,
+    pub locked: bool,
+    #[serde(default)]
+    pub invitable: Option<bool>,
+    #[serde(default)]
+    pub create_timestamp: Option<String>,
+}
+
+/// A thread member — represents a user's participation in a thread.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadMember {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub user_id: Option<String>,
+    pub join_timestamp: String,
+    pub flags: u64,
+    #[serde(default)]
+    pub member: Option<serde_json::Value>,
+}
+
+/// A forum/media channel tag, optionally assignable to threads.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForumTag {
+    pub id: String,
+    pub name: String,
+    pub moderated: bool,
+    #[serde(default)]
+    pub emoji_id: Option<String>,
+    #[serde(default)]
+    pub emoji_name: Option<String>,
+}
+
+/// The default emoji shown on a forum/media channel's reaction button.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefaultReaction {
+    #[serde(default)]
+    pub emoji_id: Option<String>,
+    #[serde(default)]
+    pub emoji_name: Option<String>,
 }
 
 impl Channel {
@@ -260,17 +437,26 @@ impl GuildEmoji {
 pub struct Sticker {
     pub id: String,
     #[serde(default)]
+    pub pack_id: Option<String>,
+    #[serde(default)]
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
     pub tags: Option<String>,
+    /// Sticker type: 1 = STANDARD, 2 = GUILD.
+    #[serde(default, rename = "type")]
+    pub sticker_type: u8,
     #[serde(default)]
     pub format_type: u8,
     #[serde(default)]
     pub available: bool,
     #[serde(default)]
     pub guild_id: Option<String>,
+    #[serde(default)]
+    pub sort_value: Option<u32>,
+    #[serde(default)]
+    pub user: Option<User>,
 }
 
 /// Guild invite
@@ -297,6 +483,21 @@ pub struct Invite {
     pub expires_at: Option<String>,
     #[serde(rename = "type", default)]
     pub invite_type: u8,
+    #[serde(default)]
+    pub approximate_presence_count: Option<u64>,
+    #[serde(default)]
+    pub approximate_member_count: Option<u64>,
+    /// Target type: 1 = STREAM, 2 = EMBEDDED_APPLICATION.
+    #[serde(default)]
+    pub target_type: Option<u8>,
+    #[serde(default)]
+    pub target_user: Option<User>,
+    #[serde(default)]
+    pub target_application: Option<serde_json::Value>,
+    #[serde(default)]
+    pub flags: Option<u64>,
+    #[serde(default)]
+    pub guild_scheduled_event: Option<serde_json::Value>,
 }
 
 impl Invite {
@@ -496,6 +697,44 @@ pub struct ScheduledEvent {
     pub user_count: Option<u32>,
     /// Cover image hash.
     pub image: Option<String>,
+    /// Recurrence rule for repeating events.
+    #[serde(default)]
+    pub recurrence_rule: Option<RecurrenceRule>,
+}
+
+/// Recurrence rule for a scheduled event.
+///
+/// Mirrors the `guild_scheduled_event_recurrence_rule` object documented at
+/// <https://discord.com/developers/docs/resources/guild-scheduled-event#guild-scheduled-event-recurrence-rule-object>.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecurrenceRule {
+    /// ISO 8601 timestamp the recurrence interval starts at.
+    pub start: String,
+    /// ISO 8601 timestamp the recurrence interval ends at, if any.
+    #[serde(default)]
+    pub end: Option<String>,
+    /// Frequency: 0=YEARLY, 1=MONTHLY, 2=WEEKLY, 3=DAILY.
+    pub frequency: u8,
+    /// Spacing between events (e.g. interval=2 with weekly = every other week).
+    pub interval: u32,
+    /// Specific weekdays (0=Mon..6=Sun) the event recurs on.
+    #[serde(default)]
+    pub by_weekday: Option<Vec<u8>>,
+    /// Specific days within a week the event recurs on (`{n, day}` pairs).
+    #[serde(default)]
+    pub by_n_weekday: Option<Vec<serde_json::Value>>,
+    /// Months (1-12) the event recurs on.
+    #[serde(default)]
+    pub by_month: Option<Vec<u8>>,
+    /// Days of the month (1-31) the event recurs on.
+    #[serde(default)]
+    pub by_month_day: Option<Vec<u32>>,
+    /// Days of the year (1-364) the event recurs on.
+    #[serde(default)]
+    pub by_year_day: Option<Vec<u32>>,
+    /// Total number of times the event will recur, if bounded.
+    #[serde(default)]
+    pub count: Option<u32>,
 }
 
 /// A Stage instance — a live audio session in a Stage channel.

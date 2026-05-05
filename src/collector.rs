@@ -285,18 +285,18 @@ mod tests {
 
         // Emit a non-matching message (different author)
         emitter
-            .dispatch(crate::events::DispatchEvent {
-                event_type: "MESSAGE_CREATE".to_string(),
-                data: serde_json::json!({ "author": { "id": "user_b" }, "channel_id": "c1", "content": "no" }),
-            })
+            .dispatch(crate::events::DispatchEvent::new(
+                "MESSAGE_CREATE".to_string(),
+                serde_json::json!({ "author": { "id": "user_b" }, "channel_id": "c1", "content": "no" }),
+            ))
             .await;
 
         // Emit a matching message
         emitter
-            .dispatch(crate::events::DispatchEvent {
-                event_type: "MESSAGE_CREATE".to_string(),
-                data: serde_json::json!({ "author": { "id": "user_a" }, "channel_id": "c1", "content": "yes" }),
-            })
+            .dispatch(crate::events::DispatchEvent::new(
+                "MESSAGE_CREATE".to_string(),
+                serde_json::json!({ "author": { "id": "user_a" }, "channel_id": "c1", "content": "yes" }),
+            ))
             .await;
 
         // Allow spawned event handler tasks to run

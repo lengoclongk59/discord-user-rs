@@ -594,6 +594,224 @@ pub struct ChannelPinsUpdateEvent {
     pub last_pin_timestamp: Option<String>,
 }
 
+/// GUILD_MEMBERS_CHUNK event data — response to a `Request Guild Members`
+/// gateway command. Members are streamed in chunks of up to 1000.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GuildMembersChunkEvent {
+    pub guild_id: String,
+    #[serde(default)]
+    pub members: Vec<Member>,
+    pub chunk_index: u32,
+    pub chunk_count: u32,
+    #[serde(default)]
+    pub not_found: Option<Vec<String>>,
+    #[serde(default)]
+    pub presences: Option<Vec<Value>>,
+    #[serde(default)]
+    pub nonce: Option<String>,
+}
+
+/// MESSAGE_POLL_VOTE_ADD event data — a user voted on a poll
+#[derive(Debug, Clone, Deserialize)]
+pub struct MessagePollVoteAddEvent {
+    pub user_id: String,
+    pub channel_id: String,
+    pub message_id: String,
+    #[serde(default)]
+    pub guild_id: Option<String>,
+    pub answer_id: u32,
+}
+
+/// MESSAGE_POLL_VOTE_REMOVE event data — a user removed their poll vote
+#[derive(Debug, Clone, Deserialize)]
+pub struct MessagePollVoteRemoveEvent {
+    pub user_id: String,
+    pub channel_id: String,
+    pub message_id: String,
+    #[serde(default)]
+    pub guild_id: Option<String>,
+    pub answer_id: u32,
+}
+
+/// ENTITLEMENT_CREATE / UPDATE / DELETE event data — premium subscription /
+/// SKU entitlement gained or revoked.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EntitlementEvent {
+    pub id: String,
+    pub sku_id: String,
+    pub application_id: String,
+    #[serde(default)]
+    pub user_id: Option<String>,
+    #[serde(rename = "type")]
+    pub type_: u8,
+    #[serde(default)]
+    pub deleted: bool,
+    #[serde(default)]
+    pub starts_at: Option<String>,
+    #[serde(default)]
+    pub ends_at: Option<String>,
+    #[serde(default)]
+    pub guild_id: Option<String>,
+    #[serde(default)]
+    pub consumed: Option<bool>,
+}
+
+/// INTEGRATION_CREATE / UPDATE / DELETE event data
+///
+/// First-pass: schema is large and rarely-needed; preserve the raw payload
+/// alongside the obvious IDs so consumers can drill in if needed.
+#[derive(Debug, Clone, Deserialize)]
+pub struct IntegrationEvent {
+    pub id: String,
+    pub guild_id: String,
+    /// Full integration payload (Discord's Integration object).
+    #[serde(flatten)]
+    pub extra: Value,
+}
+
+/// GUILD_SOUNDBOARD_SOUND_CREATE / _UPDATE / _DELETE event data
+///
+/// Singular soundboard event (a single sound was created/updated/deleted in
+/// a guild). Distinct from the older [`SoundboardSoundEvent`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct GuildSoundboardSoundEvent {
+    pub guild_id: String,
+    pub sound_id: String,
+    /// Remaining fields (name, volume, emoji_id, emoji_name, available, etc).
+    #[serde(flatten)]
+    pub extra: Value,
+}
+
+/// GUILD_SOUNDBOARD_SOUNDS_UPDATE event data — multiple soundboard sounds
+/// updated for a guild (plural).
+#[derive(Debug, Clone, Deserialize)]
+pub struct GuildSoundboardSoundsUpdateEvent {
+    pub guild_id: String,
+    #[serde(default)]
+    pub soundboard_sounds: Vec<Value>,
+}
+
+/// SOUNDBOARD_SOUNDS event data — gateway response to opcode 31
+/// (Request Soundboard Sounds). Distinct from the singular CRUD events above.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SoundboardSoundsEvent {
+    pub guild_id: String,
+    #[serde(default)]
+    pub soundboard_sounds: Vec<Value>,
+}
+
+/// THREAD_MEMBERS_UPDATE event data — multiple thread members joined or left
+#[derive(Debug, Clone, Deserialize)]
+pub struct ThreadMembersUpdateEvent {
+    pub id: String,
+    pub guild_id: String,
+    pub member_count: u32,
+    #[serde(default)]
+    pub added_members: Option<Vec<Value>>,
+    #[serde(default)]
+    pub removed_member_ids: Option<Vec<String>>,
+}
+
+/// INVITE_CREATE event data
+#[derive(Debug, Clone, Deserialize)]
+pub struct InviteCreateEvent {
+    pub channel_id: String,
+    pub code: String,
+    pub created_at: String,
+    #[serde(default)]
+    pub guild_id: Option<String>,
+    #[serde(default)]
+    pub inviter: Option<User>,
+    pub max_age: u32,
+    pub max_uses: u32,
+    #[serde(default)]
+    pub target_type: Option<u8>,
+    #[serde(default)]
+    pub target_user: Option<User>,
+    #[serde(default)]
+    pub target_application: Option<Value>,
+    #[serde(default)]
+    pub temporary: bool,
+    #[serde(default)]
+    pub uses: u32,
+}
+
+/// INVITE_DELETE event data
+#[derive(Debug, Clone, Deserialize)]
+pub struct InviteDeleteEvent {
+    pub channel_id: String,
+    #[serde(default)]
+    pub guild_id: Option<String>,
+    pub code: String,
+}
+
+/// APPLICATION_COMMAND_PERMISSIONS_UPDATE event data
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApplicationCommandPermissionsUpdateEvent {
+    pub id: String,
+    pub application_id: String,
+    pub guild_id: String,
+    #[serde(default)]
+    pub permissions: Vec<Value>,
+}
+
+/// VOICE_CHANNEL_EFFECT_SEND event data — emoji reaction / soundboard burst
+/// in a voice channel.
+#[derive(Debug, Clone, Deserialize)]
+pub struct VoiceChannelEffectSendEvent {
+    pub channel_id: String,
+    pub guild_id: String,
+    pub user_id: String,
+    #[serde(default)]
+    pub emoji: Option<Value>,
+    #[serde(default)]
+    pub animation_type: Option<u8>,
+    #[serde(default)]
+    pub animation_id: Option<u32>,
+    #[serde(default)]
+    pub sound_id: Option<String>,
+    #[serde(default)]
+    pub sound_volume: Option<f64>,
+}
+
+/// GUILD_EMOJIS_UPDATE event data — guild's emoji list changed
+#[derive(Debug, Clone, Deserialize)]
+pub struct GuildEmojisUpdateEvent {
+    pub guild_id: String,
+    #[serde(default)]
+    pub emojis: Vec<Value>,
+}
+
+/// GUILD_STICKERS_UPDATE event data — guild's sticker list changed
+#[derive(Debug, Clone, Deserialize)]
+pub struct GuildStickersUpdateEvent {
+    pub guild_id: String,
+    #[serde(default)]
+    pub stickers: Vec<Value>,
+}
+
+/// GUILD_INTEGRATIONS_UPDATE event data — guild's integration list changed
+/// (e.g. an integration was added/removed). The full integration list must
+/// be re-fetched via REST.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GuildIntegrationsUpdateEvent {
+    pub guild_id: String,
+}
+
+/// SUBSCRIPTION_CREATE / UPDATE / DELETE event data
+///
+/// First-pass: full subscription schema kept in `extra` for drill-down.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubscriptionEvent {
+    pub id: String,
+    pub user_id: String,
+    #[serde(default)]
+    pub sku_ids: Vec<String>,
+    /// Remaining fields (status, period_start, period_end, etc).
+    #[serde(flatten)]
+    pub extra: Value,
+}
+
 // ==================== Typed Event Enum ====================
 
 /// Strongly-typed Discord gateway events
@@ -709,6 +927,57 @@ pub enum TypedEvent {
     SoundboardSoundUpdate(SoundboardSoundEvent),
     /// Soundboard sound deleted
     SoundboardSoundDelete(SoundboardSoundEvent),
+    /// Chunk of guild members in response to a Request Guild Members op
+    GuildMembersChunk(Box<GuildMembersChunkEvent>),
+    /// Poll vote added
+    MessagePollVoteAdd(MessagePollVoteAddEvent),
+    /// Poll vote removed
+    MessagePollVoteRemove(MessagePollVoteRemoveEvent),
+    /// Entitlement created (premium / SKU access granted)
+    EntitlementCreate(EntitlementEvent),
+    /// Entitlement updated
+    EntitlementUpdate(EntitlementEvent),
+    /// Entitlement deleted (premium / SKU access revoked)
+    EntitlementDelete(EntitlementEvent),
+    /// Integration created
+    IntegrationCreate(IntegrationEvent),
+    /// Integration updated
+    IntegrationUpdate(IntegrationEvent),
+    /// Integration deleted
+    IntegrationDelete(IntegrationEvent),
+    /// Guild soundboard sound created (singular CRUD; distinct from
+    /// [`TypedEvent::SoundboardSoundCreate`])
+    GuildSoundboardSoundCreate(GuildSoundboardSoundEvent),
+    /// Guild soundboard sound updated
+    GuildSoundboardSoundUpdate(GuildSoundboardSoundEvent),
+    /// Guild soundboard sound deleted
+    GuildSoundboardSoundDelete(GuildSoundboardSoundEvent),
+    /// Multiple soundboard sounds updated for a guild (plural)
+    GuildSoundboardSoundsUpdate(GuildSoundboardSoundsUpdateEvent),
+    /// Gateway response to a Request Soundboard Sounds (op 31)
+    SoundboardSounds(SoundboardSoundsEvent),
+    /// Multiple thread members joined or left
+    ThreadMembersUpdate(ThreadMembersUpdateEvent),
+    /// Invite created
+    InviteCreate(InviteCreateEvent),
+    /// Invite deleted
+    InviteDelete(InviteDeleteEvent),
+    /// Application command permissions updated
+    ApplicationCommandPermissionsUpdate(ApplicationCommandPermissionsUpdateEvent),
+    /// Voice channel effect (emoji reaction / soundboard burst) sent
+    VoiceChannelEffectSend(VoiceChannelEffectSendEvent),
+    /// Guild's emoji list changed
+    GuildEmojisUpdate(GuildEmojisUpdateEvent),
+    /// Guild's sticker list changed
+    GuildStickersUpdate(GuildStickersUpdateEvent),
+    /// Guild's integration list changed
+    GuildIntegrationsUpdate(GuildIntegrationsUpdateEvent),
+    /// Subscription created
+    SubscriptionCreate(SubscriptionEvent),
+    /// Subscription updated
+    SubscriptionUpdate(SubscriptionEvent),
+    /// Subscription deleted
+    SubscriptionDelete(SubscriptionEvent),
     /// Unknown/unhandled event with raw data
     Unknown { event_type: String, data: Value },
 }
@@ -777,6 +1046,31 @@ impl TypedEvent {
             "SOUNDBOARD_SOUND_CREATE" => parse!(SoundboardSoundCreate),
             "SOUNDBOARD_SOUND_UPDATE" => parse!(SoundboardSoundUpdate),
             "SOUNDBOARD_SOUND_DELETE" => parse!(SoundboardSoundDelete),
+            "GUILD_MEMBERS_CHUNK" => serde_json::from_value(data.clone()).map(|e| TypedEvent::GuildMembersChunk(Box::new(e))).unwrap_or_else(|_| TypedEvent::Unknown { event_type: event_type.to_string(), data }),
+            "MESSAGE_POLL_VOTE_ADD" => parse!(MessagePollVoteAdd),
+            "MESSAGE_POLL_VOTE_REMOVE" => parse!(MessagePollVoteRemove),
+            "ENTITLEMENT_CREATE" => parse!(EntitlementCreate),
+            "ENTITLEMENT_UPDATE" => parse!(EntitlementUpdate),
+            "ENTITLEMENT_DELETE" => parse!(EntitlementDelete),
+            "INTEGRATION_CREATE" => parse!(IntegrationCreate),
+            "INTEGRATION_UPDATE" => parse!(IntegrationUpdate),
+            "INTEGRATION_DELETE" => parse!(IntegrationDelete),
+            "GUILD_SOUNDBOARD_SOUND_CREATE" => parse!(GuildSoundboardSoundCreate),
+            "GUILD_SOUNDBOARD_SOUND_UPDATE" => parse!(GuildSoundboardSoundUpdate),
+            "GUILD_SOUNDBOARD_SOUND_DELETE" => parse!(GuildSoundboardSoundDelete),
+            "GUILD_SOUNDBOARD_SOUNDS_UPDATE" => parse!(GuildSoundboardSoundsUpdate),
+            "SOUNDBOARD_SOUNDS" => parse!(SoundboardSounds),
+            "THREAD_MEMBERS_UPDATE" => parse!(ThreadMembersUpdate),
+            "INVITE_CREATE" => parse!(InviteCreate),
+            "INVITE_DELETE" => parse!(InviteDelete),
+            "APPLICATION_COMMAND_PERMISSIONS_UPDATE" => parse!(ApplicationCommandPermissionsUpdate),
+            "VOICE_CHANNEL_EFFECT_SEND" => parse!(VoiceChannelEffectSend),
+            "GUILD_EMOJIS_UPDATE" => parse!(GuildEmojisUpdate),
+            "GUILD_STICKERS_UPDATE" => parse!(GuildStickersUpdate),
+            "GUILD_INTEGRATIONS_UPDATE" => parse!(GuildIntegrationsUpdate),
+            "SUBSCRIPTION_CREATE" => parse!(SubscriptionCreate),
+            "SUBSCRIPTION_UPDATE" => parse!(SubscriptionUpdate),
+            "SUBSCRIPTION_DELETE" => parse!(SubscriptionDelete),
             _ => TypedEvent::Unknown { event_type: event_type.to_string(), data },
         }
     }
@@ -839,6 +1133,31 @@ impl TypedEvent {
             TypedEvent::SoundboardSoundCreate(_) => "SOUNDBOARD_SOUND_CREATE",
             TypedEvent::SoundboardSoundUpdate(_) => "SOUNDBOARD_SOUND_UPDATE",
             TypedEvent::SoundboardSoundDelete(_) => "SOUNDBOARD_SOUND_DELETE",
+            TypedEvent::GuildMembersChunk(_) => "GUILD_MEMBERS_CHUNK",
+            TypedEvent::MessagePollVoteAdd(_) => "MESSAGE_POLL_VOTE_ADD",
+            TypedEvent::MessagePollVoteRemove(_) => "MESSAGE_POLL_VOTE_REMOVE",
+            TypedEvent::EntitlementCreate(_) => "ENTITLEMENT_CREATE",
+            TypedEvent::EntitlementUpdate(_) => "ENTITLEMENT_UPDATE",
+            TypedEvent::EntitlementDelete(_) => "ENTITLEMENT_DELETE",
+            TypedEvent::IntegrationCreate(_) => "INTEGRATION_CREATE",
+            TypedEvent::IntegrationUpdate(_) => "INTEGRATION_UPDATE",
+            TypedEvent::IntegrationDelete(_) => "INTEGRATION_DELETE",
+            TypedEvent::GuildSoundboardSoundCreate(_) => "GUILD_SOUNDBOARD_SOUND_CREATE",
+            TypedEvent::GuildSoundboardSoundUpdate(_) => "GUILD_SOUNDBOARD_SOUND_UPDATE",
+            TypedEvent::GuildSoundboardSoundDelete(_) => "GUILD_SOUNDBOARD_SOUND_DELETE",
+            TypedEvent::GuildSoundboardSoundsUpdate(_) => "GUILD_SOUNDBOARD_SOUNDS_UPDATE",
+            TypedEvent::SoundboardSounds(_) => "SOUNDBOARD_SOUNDS",
+            TypedEvent::ThreadMembersUpdate(_) => "THREAD_MEMBERS_UPDATE",
+            TypedEvent::InviteCreate(_) => "INVITE_CREATE",
+            TypedEvent::InviteDelete(_) => "INVITE_DELETE",
+            TypedEvent::ApplicationCommandPermissionsUpdate(_) => "APPLICATION_COMMAND_PERMISSIONS_UPDATE",
+            TypedEvent::VoiceChannelEffectSend(_) => "VOICE_CHANNEL_EFFECT_SEND",
+            TypedEvent::GuildEmojisUpdate(_) => "GUILD_EMOJIS_UPDATE",
+            TypedEvent::GuildStickersUpdate(_) => "GUILD_STICKERS_UPDATE",
+            TypedEvent::GuildIntegrationsUpdate(_) => "GUILD_INTEGRATIONS_UPDATE",
+            TypedEvent::SubscriptionCreate(_) => "SUBSCRIPTION_CREATE",
+            TypedEvent::SubscriptionUpdate(_) => "SUBSCRIPTION_UPDATE",
+            TypedEvent::SubscriptionDelete(_) => "SUBSCRIPTION_DELETE",
             TypedEvent::Unknown { event_type, .. } => event_type,
         }
     }

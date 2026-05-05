@@ -91,6 +91,13 @@ pub struct CreateThreadRequest {
     /// Whether the thread is invitable (private threads only)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invitable: Option<bool>,
+    /// Forum/media channel: tag IDs (snowflakes) to apply to the thread.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub applied_tags: Option<Vec<String>>,
+    /// Forum/media channel: first-message payload sent with the thread.
+    /// Required when creating a thread in a forum or media channel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<serde_json::Value>,
 }
 
 impl CreateThreadRequest {
@@ -102,6 +109,8 @@ impl CreateThreadRequest {
             rate_limit_per_user: None,
             channel_type: Some(11),
             invitable: None,
+            applied_tags: None,
+            message: None,
         }
     }
 
@@ -113,6 +122,8 @@ impl CreateThreadRequest {
             rate_limit_per_user: None,
             channel_type: Some(12),
             invitable: None,
+            applied_tags: None,
+            message: None,
         }
     }
 
@@ -121,6 +132,42 @@ impl CreateThreadRequest {
         self.auto_archive_duration = Some(minutes);
         self
     }
+
+    /// Set forum/media-channel tag IDs to apply to the new thread.
+    pub fn applied_tags(mut self, tag_ids: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.applied_tags = Some(tag_ids.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Set the first-message payload for a forum/media-channel thread.
+    pub fn message(mut self, message: serde_json::Value) -> Self {
+        self.message = Some(message);
+        self
+    }
+}
+
+/// First-message payload used when creating a thread in a forum or media
+/// channel via [`CreateThreadRequest::message`].
+///
+/// Mirrors a partial Discord message create payload — every field is optional
+/// but at least one of `content`, `embeds`, `sticker_ids`, `components`, or
+/// `attachments` must be set for Discord to accept the request.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ForumThreadMessage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embeds: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_mentions: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub components: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sticker_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flags: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<serde_json::Value>>,
 }
 
 /// Request body for PATCH /channels/{id} when editing a thread
@@ -436,6 +483,9 @@ pub struct CreateStageInstanceRequest {
     /// `MENTION_EVERYONE`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub send_start_notification: Option<bool>,
+    /// Optional guild scheduled event ID to associate with the stage instance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guild_scheduled_event_id: Option<String>,
 }
 
 /// Request body for PATCH /stage-instances/{channel_id}
@@ -812,6 +862,9 @@ pub struct EditGuildMemberRequest {
     /// (timed out). `Some("")` or `Some("null")` lifts an active timeout.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub communication_disabled_until: Option<String>,
+    /// Guild member flags bitfield (e.g. BYPASSES_VERIFICATION = 1 << 2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flags: Option<u64>,
 }
 
 impl EditGuildMemberRequest {
@@ -861,4 +914,73 @@ pub struct EditChannelRequest {
     /// Move to a different parent category.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
+}
+
+/// Request body for PUT /channels/{id}/permissions/{overwrite_id}
+/// (edit channel permission overwrite).
+#[derive(Debug, Clone, Serialize)]
+pub struct EditChannelPermissionsRequest {
+    /// Allowed permissions bitfield as a string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow: Option<String>,
+    /// Denied permissions bitfield as a string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deny: Option<String>,
+    /// Overwrite type: 0 = role, 1 = member.
+    #[serde(rename = "type")]
+    pub overwrite_type: u8,
+}
+
+/// Request body for POST /channels/{id}/invites (create a channel invite).
+///
+/// All fields are optional — Discord applies sensible defaults.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CreateInviteRequest {
+    /// Duration of invite in seconds before expiry (0 = never). Default 86400.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age: Option<u32>,
+    /// Max number of uses (0 = unlimited). Default 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_uses: Option<u32>,
+    /// Whether the invite grants temporary membership.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temporary: Option<bool>,
+    /// If true, do not try to reuse a similar invite (useful for one-time
+    /// links).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unique: Option<bool>,
+    /// Target type for stream/embedded invites: 1 = STREAM, 2 = EMBEDDED_APPLICATION.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_type: Option<u8>,
+    /// Target user ID (required for STREAM invites).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_user_id: Option<String>,
+    /// Target application ID (required for EMBEDDED_APPLICATION invites).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_application_id: Option<String>,
+}
+
+/// Request body for PATCH /guilds/{id}/welcome-screen.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct WelcomeScreenModifyRequest {
+    /// Whether the welcome screen is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Channels shown in the welcome screen (max 5).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub welcome_channels: Option<Vec<serde_json::Value>>,
+    /// Server description shown in the welcome screen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Request body for POST /guilds/{id}/bulk-ban (bulk-ban guild members).
+#[derive(Debug, Clone, Serialize)]
+pub struct BulkBanRequest {
+    /// User IDs to ban (max 200 per request).
+    pub user_ids: Vec<String>,
+    /// Number of seconds of message history to delete for each banned user
+    /// (0–604800, i.e. up to 7 days).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delete_message_seconds: Option<u32>,
 }

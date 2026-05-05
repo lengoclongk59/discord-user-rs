@@ -62,6 +62,12 @@ pub enum MessageType {
     StageSpeaker = 29,
     StageTopic = 31,
     GuildApplicationPremiumSubscription = 32,
+    GuildIncidentAlertModeEnabled = 36,
+    GuildIncidentAlertModeDisabled = 37,
+    GuildIncidentReportRaid = 38,
+    GuildIncidentReportFalseAlarm = 39,
+    PurchaseNotification = 44,
+    PollResult = 46,
 }
 
 /// Relationship type between users
@@ -129,12 +135,16 @@ pub enum ActionType {
     ThreadUpdate = 111,
     ThreadDelete = 112,
     ApplicationCommandPermissionUpdate = 121,
+    SoundboardSoundCreate = 130,
+    SoundboardSoundUpdate = 131,
+    SoundboardSoundDelete = 132,
     AutoModerationRuleCreate = 140,
     AutoModerationRuleUpdate = 141,
     AutoModerationRuleDelete = 142,
     AutoModerationBlockMessage = 143,
     AutoModerationFlagToChannel = 144,
     AutoModerationUserCommunicationDisabled = 145,
+    AutoModerationQuarantineUser = 146,
     CreatorMonetizationRequestCreated = 150,
     CreatorMonetizationTermsAccepted = 151,
     OnboardingPromptCreate = 163,
@@ -144,7 +154,8 @@ pub enum ActionType {
     OnboardingUpdate = 167,
     HomeSettingsCreate = 190,
     HomeSettingsUpdate = 191,
-    VoiceChannelStatusUpdated = 192,
+    VoiceChannelStatusUpdate = 192,
+    VoiceChannelStatusDelete = 193,
 }
 
 /// Channel type
@@ -250,11 +261,15 @@ bitflags::bitflags! {
         /// Message is an interaction response and the bot is still loading
         const LOADING = 1 << 7;
         /// Message failed to mention some roles in a thread
-        const FAILED_GUILD_CHANNEL_FOLLOWUP = 1 << 8;
+        const FAILED_TO_MENTION_SOME_ROLES_IN_THREAD = 1 << 8;
         /// Message will not trigger push / desktop notifications
         const SUPPRESS_NOTIFICATIONS = 1 << 12;
         /// Message is a voice message
         const IS_VOICE_MESSAGE = 1 << 13;
+        /// Message is a snapshot of a forwarded message
+        const HAS_SNAPSHOT = 1 << 14;
+        /// Message is built using Components V2 (components-driven)
+        const IS_COMPONENTS_V2 = 1 << 15;
     }
 }
 
@@ -342,8 +357,14 @@ bitflags::bitflags! {
         const MODERATE_MEMBERS = 1 << 40;
         const VIEW_CREATOR_MONETIZATION_ANALYTICS = 1 << 41;
         const USE_SOUNDBOARD = 1 << 42;
+        const CREATE_GUILD_EXPRESSIONS = 1 << 43;
+        const CREATE_EVENTS = 1 << 44;
         const USE_EXTERNAL_SOUNDS = 1 << 45;
         const SEND_VOICE_MESSAGES = 1 << 46;
+        const SET_VOICE_CHANNEL_STATUS = 1 << 48;
+        const SEND_POLLS = 1 << 49;
+        const USE_EXTERNAL_APPS = 1 << 50;
+        const PIN_MESSAGES = 1 << 51;
     }
 }
 
@@ -425,6 +446,39 @@ pub enum InteractionResponseType {
     Modal = 9,
     /// Upsell premium in response to an interaction.
     PremiumRequired = 10,
+    /// Launch the activity associated with the application.
+    LaunchActivity = 12,
+}
+
+/// Application command type (slash, user, message, entry point).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr, Deserialize_repr, Default)]
+#[repr(u8)]
+pub enum ApplicationCommandType {
+    /// Slash command, invoked from the chat input.
+    #[default]
+    ChatInput = 1,
+    /// User context-menu command.
+    User = 2,
+    /// Message context-menu command.
+    Message = 3,
+    /// Primary entry point command for activities.
+    PrimaryEntryPoint = 4,
+}
+
+/// Interaction request type (received from the gateway / webhook).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr, Deserialize_repr)]
+#[repr(u8)]
+pub enum InteractionType {
+    /// Primary stub / ping interaction.
+    PrimaryStub = 1,
+    /// Application command (slash / user / message).
+    ApplicationCommand = 2,
+    /// Message component (button / select / etc).
+    MessageComponent = 3,
+    /// Application command autocomplete request.
+    ApplicationCommandAutocomplete = 4,
+    /// Modal submission.
+    ModalSubmit = 5,
 }
 
 macro_rules! impl_serde_as_u64 {

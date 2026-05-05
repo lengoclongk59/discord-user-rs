@@ -202,4 +202,44 @@ pub trait SlashCommandOps: DiscordContext {
     async fn defer_interaction(&self, interaction_id: &InteractionId, interaction_token: &str) -> Result<()> {
         self.create_interaction_response(interaction_id, interaction_token, CreateInteractionResponseRequest::defer()).await
     }
+
+    // ── Application command permissions ──────────────────────────────────────
+
+    /// Get permissions for a single guild application command.
+    ///
+    /// `GET /applications/{app_id}/guilds/{gid}/commands/{cid}/permissions`
+    ///
+    /// # Errors
+    /// Returns [`DiscordError::Http`] on HTTP failure.
+    async fn get_application_command_permissions(&self, application_id: &ApplicationId, guild_id: &GuildId, command_id: &CommandId) -> Result<serde_json::Value> {
+        self.http().get(Route::ApplicationCommandPermissions { application_id: application_id.get(), guild_id: guild_id.get(), command_id: Some(command_id.get()) }).await
+    }
+
+    /// Get permissions for all application commands in a guild.
+    ///
+    /// `GET /applications/{app_id}/guilds/{gid}/commands/permissions`
+    ///
+    /// # Errors
+    /// Returns [`DiscordError::Http`] on HTTP failure.
+    async fn get_all_application_command_permissions(&self, application_id: &ApplicationId, guild_id: &GuildId) -> Result<Vec<serde_json::Value>> {
+        self.http().get(Route::ApplicationCommandPermissions { application_id: application_id.get(), guild_id: guild_id.get(), command_id: None }).await
+    }
+
+    /// Edit permissions for a single guild application command.
+    ///
+    /// `PUT /applications/{app_id}/guilds/{gid}/commands/{cid}/permissions`
+    ///
+    /// Requires a Bearer token from OAuth2 with the
+    /// `applications.commands.permissions.update` scope.
+    ///
+    /// # Errors
+    /// Returns [`DiscordError::Http`] on HTTP failure or when the caller lacks
+    /// the required Bearer token.
+    async fn edit_application_command_permissions(&self, application_id: &ApplicationId, guild_id: &GuildId, command_id: &CommandId, permissions: Vec<serde_json::Value>) -> Result<serde_json::Value> {
+        #[derive(serde::Serialize)]
+        struct Body {
+            permissions: Vec<serde_json::Value>,
+        }
+        self.http().put(Route::ApplicationCommandPermissions { application_id: application_id.get(), guild_id: guild_id.get(), command_id: Some(command_id.get()) }, Body { permissions }).await
+    }
 }

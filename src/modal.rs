@@ -7,6 +7,16 @@
 //! Use [`ModalBuilder`] to construct the JSON payload to pass as the
 //! interaction response body.
 //!
+//! # Components V2 modal bodies — pending
+//!
+//! Discord's Components V2 work introduces a `Label` (type 18) wrapper around
+//! `TextInput` (type 4) and allows a [`crate::components::Component::Section`]
+//! body inside modals as an alternative to the classic `ActionRow` + label
+//! arrangement.  This builder still emits the v1 layout (action row → text
+//! input).  Once the Components V2 fields stabilise upstream, [`ModalBuilder`]
+//! should grow `text_display_field` / `section_field` helpers that emit
+//! [`crate::components::Component`] bodies directly.
+//!
 //! # Example
 //! ```
 //! use discord_user::modal::ModalBuilder;

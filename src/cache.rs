@@ -392,25 +392,7 @@ mod tests {
         Guild {
             id: id.to_string(),
             name: Some(name.to_string()),
-            icon: None,
-            splash: None,
-            banner: None,
-            description: None,
-            owner_id: None,
-            member_count: None,
-            premium_subscription_count: 0,
-            premium_tier: 0,
-            verification_level: 0,
-            nsfw_level: 0,
-            nsfw: false,
-            features: vec![],
-            roles: vec![],
-            channels: vec![],
-            emojis: vec![],
-            stickers: vec![],
-            joined_at: None,
-            large: false,
-            lazy: false,
+            ..Default::default()
         }
     }
 

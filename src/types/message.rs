@@ -49,6 +49,49 @@ pub struct Message {
     /// Attached poll, if this message contains one.
     #[serde(default)]
     pub poll: Option<Poll>,
+    /// Channels specifically mentioned in this message (only crossposted
+    /// messages currently populate this).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mention_channels: Option<Vec<ChannelMention>>,
+    /// Rich Presence-related activity attached to the message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<MessageActivity>,
+    /// Application object for Rich Presence-related messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application: Option<serde_json::Value>,
+    /// If the message is an Interaction or application-owned webhook, this is
+    /// the id of the application.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application_id: Option<String>,
+    /// Metadata about the interaction that produced this message (preferred
+    /// over the deprecated `interaction` field).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interaction_metadata: Option<serde_json::Value>,
+    /// Snapshot of the thread that was started from this message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<serde_json::Value>,
+    /// Sticker items sent with the message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sticker_items: Option<Vec<StickerItem>>,
+    /// **Deprecated** full sticker objects (still returned in some payloads).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stickers: Option<Vec<serde_json::Value>>,
+    /// Approximate position of this message within a thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<u32>,
+    /// Data attached to ROLE_SUBSCRIPTION_PURCHASE messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_subscription_data: Option<RoleSubscriptionData>,
+    /// Resolved data for users/members/channels/roles referenced in this
+    /// message (interaction context).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<serde_json::Value>,
+    /// Information about a call started in this message (DM/Group DM).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call: Option<MessageCall>,
+    /// Forwarded message snapshots (immutable copies of the source).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_snapshots: Option<Vec<serde_json::Value>>,
 }
 
 impl Message {
@@ -148,6 +191,58 @@ impl Message {
     }
 }
 
+/// A textual channel mentioned in a message (only present for crossposted
+/// messages; see Discord docs for `mention_channels`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelMention {
+    pub id: String,
+    pub guild_id: String,
+    /// Discord channel type integer.
+    #[serde(rename = "type")]
+    pub type_: u8,
+    pub name: String,
+}
+
+/// Rich Presence-style activity attached to a message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageActivity {
+    /// Type of message activity (1=JOIN, 2=SPECTATE, 3=LISTEN, 5=JOIN_REQUEST).
+    #[serde(rename = "type")]
+    pub activity_type: u8,
+    /// `party_id` from a Rich Presence event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub party_id: Option<String>,
+}
+
+/// Minimal sticker reference attached to a message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StickerItem {
+    pub id: String,
+    pub name: String,
+    /// Sticker format type (1=PNG, 2=APNG, 3=LOTTIE, 4=GIF).
+    pub format_type: u8,
+}
+
+/// Data attached to a `ROLE_SUBSCRIPTION_PURCHASE` system message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoleSubscriptionData {
+    pub role_subscription_listing_id: String,
+    pub tier_name: String,
+    pub total_months_subscribed: u32,
+    pub is_renewal: bool,
+}
+
+/// Information about a call started in a DM or Group DM message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageCall {
+    /// User IDs of those who participated in the call.
+    #[serde(default)]
+    pub participants: Vec<String>,
+    /// ISO 8601 timestamp when the call ended, if it has ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_timestamp: Option<String>,
+}
+
 /// A Discord poll attached to a message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Poll {
@@ -231,6 +326,18 @@ pub struct Attachment {
     pub width: Option<u32>,
     #[serde(default)]
     pub ephemeral: bool,
+    /// Display title for the attachment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Duration of the audio file in seconds (voice messages only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_secs: Option<f64>,
+    /// Base64-encoded sampled waveform preview (voice messages only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waveform: Option<String>,
+    /// Attachment flags bitfield.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flags: Option<u64>,
 }
 
 /// Message embed

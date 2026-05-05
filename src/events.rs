@@ -2,17 +2,79 @@
 
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc, RwLock,
+    Arc, OnceLock, RwLock,
 };
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use dashmap::{DashMap, DashSet};
 use serde_json::Value;
 
-/// A dispatch event from the gateway
+/// A dispatch event from the gateway.
+///
+/// `seq` is a process-wide monotonic counter assigned at gateway-read time
+/// (before fan-out to listeners). Because `EventEmitter::dispatch` spawns each
+/// listener callback on its own tokio task, listeners that persist state may
+/// otherwise apply two events for the same logical entity in the wrong order.
+/// Use `seq` as a write-time filter (e.g. only `update` if `stored.seq < seq`)
+/// to make stale, out-of-order writes silently no-op.
 #[derive(Debug, Clone)]
 pub struct DispatchEvent {
     pub event_type: String,
     pub data: Value,
+    /// Monotonic sequence number. Strictly increasing within the lifetime of
+    /// a single process. Across restarts, monotonic in expectation: the
+    /// counter is seeded from `SystemTime::now()` at first use, so a fresh
+    /// process emits seqs strictly greater than those of any prior process
+    /// (modulo clock travel). Two events with `a.seq < b.seq` were observed
+    /// in that order on the gateway socket.
+    pub seq: u64,
+}
+
+impl DispatchEvent {
+    /// Construct a dispatch event with a freshly-allocated sequence number.
+    /// Prefer this over the struct literal so `seq` stays monotonic.
+    pub fn new(event_type: String, data: Value) -> Self {
+        Self { event_type, data, seq: next_event_seq() }
+    }
+}
+
+/// Process-wide event sequence counter. Assigned at gateway-read time so a
+/// single ordering exists even when multiple subsystems construct events.
+///
+/// **Seeding.** The first `next_event_seq` call lazily initializes the counter
+/// to the current wall-clock time in nanoseconds since the Unix epoch.
+/// Reasoning: consumers that persist `seq` (e.g. as a Mongo write-filter
+/// guard) need cross-restart monotonicity. A counter that starts at zero on
+/// every process restart would silently fail every write whose stored `seq`
+/// is greater than the new in-memory counter — and since the unique
+/// `(guild_id, user_id)` index also blocks the upsert fallback, those
+/// writes would silently disappear.
+///
+/// Seeding from wall-clock means a fresh process always starts above any
+/// seq written by a prior process (assuming the clock didn't move backwards
+/// by years). Within a process, `fetch_add` keeps the counter strictly
+/// monotonic. The seed is captured at first call, not at static init, so
+/// tests can manipulate it via `OnceLock::set_for_tests`-style hacks if
+/// needed and so we don't pay the syscall cost until the first event.
+static EVENT_SEQ: OnceLock<AtomicU64> = OnceLock::new();
+
+fn event_seq_counter() -> &'static AtomicU64 {
+    EVENT_SEQ.get_or_init(|| {
+        let seed = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
+        AtomicU64::new(seed)
+    })
+}
+
+/// Allocate the next monotonic event sequence number.
+///
+/// Strictly increasing within a process. Across restarts, monotonic in
+/// expectation: the counter is seeded from the wall-clock time at first
+/// call, so a fresh process produces seqs strictly greater than those
+/// emitted before its launch (modulo clock travel). Exposed so external
+/// gateways or tests can produce ordered events without going through
+/// `DispatchEvent::new`.
+pub fn next_event_seq() -> u64 {
+    event_seq_counter().fetch_add(1, Ordering::Relaxed)
 }
 
 /// Type alias for event callback
@@ -259,5 +321,39 @@ impl Clone for EventEmitter {
             unhandled_events: Arc::clone(&self.unhandled_events),
             handled_types: Arc::clone(&self.handled_types),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn next_event_seq_is_strictly_monotonic() {
+        let a = next_event_seq();
+        let b = next_event_seq();
+        let c = next_event_seq();
+        assert!(b > a, "seq must be strictly increasing: {a} → {b}");
+        assert!(c > b, "seq must be strictly increasing: {b} → {c}");
+    }
+
+    #[test]
+    fn dispatch_event_new_assigns_increasing_seqs() {
+        let e1 = DispatchEvent::new("A".to_string(), Value::Null);
+        let e2 = DispatchEvent::new("B".to_string(), Value::Null);
+        assert!(e2.seq > e1.seq);
+    }
+
+    #[test]
+    fn seed_is_close_to_wall_clock() {
+        // First call lazily seeds from SystemTime; assert the value is in a
+        // sane window around now (greater than year 2000, less than year 2100
+        // expressed as nanos). This catches regressions where the seed
+        // accidentally falls back to 0.
+        let seq = next_event_seq();
+        const Y2K_NANOS: u64 = 946_684_800_000_000_000; //  2000-01-01 UTC
+        const Y2100_NANOS: u64 = 4_102_444_800_000_000_000; // 2100-01-01 UTC
+        assert!(seq > Y2K_NANOS, "seq seemed to seed below year-2000 wall-clock: {seq}");
+        assert!(seq < Y2100_NANOS, "seq seemed to seed above year-2100 wall-clock: {seq}");
     }
 }

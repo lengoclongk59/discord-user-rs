@@ -5,9 +5,68 @@ use std::time::Duration;
 #[cfg(feature = "collector")]
 use async_stream;
 use rand::prelude::IndexedRandom;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{context::DiscordContext, error::Result, route::Route, types::*};
+
+/// Discord REST API base used by raw helpers in this module.
+///
+/// Kept in sync with `client::API_BASE` (private). Endpoints added here that
+/// don't yet have a [`Route`] variant build URLs via [`format!`] against this
+/// base so that another agent owning `route.rs` can land routes independently.
+
+/// Response payload for `POST /guilds/{guild.id}/bulk-ban`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BulkBanResponse {
+    /// User IDs that were successfully banned.
+    #[serde(default)]
+    pub banned_users: Vec<String>,
+    /// User IDs that could not be banned (already banned, missing perms, etc.).
+    #[serde(default)]
+    pub failed_users: Vec<String>,
+}
+
+/// Reduced guild summary returned by `GET /guilds/{guild.id}/preview`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuildPreview {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub splash: Option<String>,
+    #[serde(default)]
+    pub discovery_splash: Option<String>,
+    #[serde(default)]
+    pub emojis: Vec<Value>,
+    #[serde(default)]
+    pub features: Vec<String>,
+    #[serde(default)]
+    pub approximate_member_count: Option<u64>,
+    #[serde(default)]
+    pub approximate_presence_count: Option<u64>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub stickers: Vec<Value>,
+}
+
+/// Response payload for `GET /guilds/{guild.id}/vanity-url`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VanityUrl {
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub uses: u32,
+}
+
+/// Response payload for `GET /guilds/{guild.id}/prune`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PruneCount {
+    #[serde(default)]
+    pub pruned: Option<u64>,
+}
 
 impl<T: DiscordContext + Send + Sync> GuildOps for T {}
 
@@ -390,5 +449,342 @@ pub trait GuildOps: DiscordContext {
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // 1. Bulk ban
+    // ---------------------------------------------------------------------
+
+    /// Ban up to 200 users from a guild in a single call.
+    ///
+    /// `delete_message_seconds` is clamped to Discord's 0-604800 range when
+    /// supplied. Returns lists of users that were banned and users that
+    /// failed (already banned, missing permissions, etc.).
+    ///
+    /// `POST /guilds/{guild.id}/bulk-ban`
+    async fn bulk_ban(&self, guild_id: &GuildId, user_ids: Vec<String>, delete_message_seconds: Option<u32>) -> Result<BulkBanResponse> {
+        let user_ids: Vec<String> = user_ids.into_iter().take(200).collect();
+        let mut body = json!({ "user_ids": user_ids });
+        if let Some(secs) = delete_message_seconds {
+            body["delete_message_seconds"] = json!(secs.min(604800));
+        }
+        self.http().post(Route::BulkBan { guild_id: guild_id.get() }, body).await
+    }
+
+    // ---------------------------------------------------------------------
+    // 2. Add guild member (requires OAuth2 access token with `guilds.join`)
+    // ---------------------------------------------------------------------
+
+    /// Add a user to a guild using an OAuth2 access token.
+    ///
+    /// Returns `Some(Member)` on 201 Created, `None` if the user was already a
+    /// member (204 No Content).
+    ///
+    /// `PUT /guilds/{guild.id}/members/{user.id}`
+    async fn add_guild_member(&self, guild_id: &GuildId, user_id: &UserId, access_token: &str, nick: Option<&str>, roles: Option<Vec<RoleId>>, mute: Option<bool>, deaf: Option<bool>) -> Result<Option<Member>> {
+        let mut body = json!({ "access_token": access_token });
+        if let Some(n) = nick {
+            body["nick"] = json!(n);
+        }
+        if let Some(r) = roles {
+            let role_ids: Vec<String> = r.iter().map(|id| id.get().to_string()).collect();
+            body["roles"] = json!(role_ids);
+        }
+        if let Some(m) = mute {
+            body["mute"] = json!(m);
+        }
+        if let Some(d) = deaf {
+            body["deaf"] = json!(d);
+        }
+
+        self.http().put_optional(Route::AddGuildMember { guild_id: guild_id.get(), user_id: user_id.get() }, body).await
+    }
+
+    // ---------------------------------------------------------------------
+    // 3. Modify current member
+    // ---------------------------------------------------------------------
+
+    /// Modify the current user's nickname in a guild.
+    ///
+    /// Pass `Some("")` to clear the nickname, `None` to leave it unchanged.
+    ///
+    /// `PATCH /guilds/{guild.id}/members/@me`
+    async fn modify_current_member(&self, guild_id: &GuildId, nick: Option<String>) -> Result<Member> {
+        let body = match nick {
+            Some(n) => json!({ "nick": n }),
+            None => json!({}),
+        };
+        self.http().patch(Route::ModifyCurrentMember { guild_id: guild_id.get() }, body).await
+    }
+
+    // ---------------------------------------------------------------------
+    // 4. Guild preview
+    // ---------------------------------------------------------------------
+
+    /// Fetch the public preview for a guild — works for any discoverable guild
+    /// even if the current user isn't a member.
+    ///
+    /// `GET /guilds/{guild.id}/preview`
+    async fn get_guild_preview(&self, guild_id: &GuildId) -> Result<GuildPreview> {
+        self.http().get(Route::GuildPreview { guild_id: guild_id.get() }).await
+    }
+
+    // ---------------------------------------------------------------------
+    // 5. Welcome screen
+    // ---------------------------------------------------------------------
+
+    /// Fetch the welcome screen for a Community guild.
+    ///
+    /// `GET /guilds/{guild.id}/welcome-screen`
+    async fn get_welcome_screen(&self, guild_id: &GuildId) -> Result<crate::types::guild::WelcomeScreen> {
+        self.http().get(Route::WelcomeScreen { guild_id: guild_id.get() }).await
+    }
+
+    /// Modify the welcome screen for a Community guild.
+    ///
+    /// Each argument is independently optional — `None` leaves that field
+    /// untouched.
+    ///
+    /// `PATCH /guilds/{guild.id}/welcome-screen`
+    async fn modify_welcome_screen(&self, guild_id: &GuildId, enabled: Option<bool>, welcome_channels: Option<Value>, description: Option<String>) -> Result<crate::types::guild::WelcomeScreen> {
+        let mut body = serde_json::Map::new();
+        if let Some(e) = enabled {
+            body.insert("enabled".into(), json!(e));
+        }
+        if let Some(c) = welcome_channels {
+            body.insert("welcome_channels".into(), c);
+        }
+        if let Some(d) = description {
+            body.insert("description".into(), json!(d));
+        }
+        self.http().patch(Route::WelcomeScreen { guild_id: guild_id.get() }, Value::Object(body)).await
+    }
+
+    // ---------------------------------------------------------------------
+    // 6. Onboarding
+    // ---------------------------------------------------------------------
+
+    /// Fetch the onboarding configuration for a guild.
+    ///
+    /// `GET /guilds/{guild.id}/onboarding`
+    async fn get_guild_onboarding(&self, guild_id: &GuildId) -> Result<Value> {
+        self.http().get(Route::GuildOnboarding { guild_id: guild_id.get() }).await
+    }
+
+    /// Replace the onboarding configuration for a guild.
+    ///
+    /// `PUT /guilds/{guild.id}/onboarding`
+    async fn modify_guild_onboarding(&self, guild_id: &GuildId, body: Value) -> Result<Value> {
+        self.http().put(Route::GuildOnboarding { guild_id: guild_id.get() }, body).await
+    }
+
+    // ---------------------------------------------------------------------
+    // 7. Guild templates
+    // ---------------------------------------------------------------------
+
+    /// Resolve a guild template code without joining the guild.
+    ///
+    /// `GET /guilds/templates/{template.code}`
+    async fn get_guild_template(&self, code: &str) -> Result<Value> {
+        self.http().get(Route::GuildTemplate { code: std::borrow::Cow::Borrowed(code) }).await
+    }
+
+    /// Create a brand-new guild from a template.
+    ///
+    /// `icon` is a base64 data URI when present.
+    ///
+    /// `POST /guilds/templates/{template.code}`
+    async fn create_guild_from_template(&self, code: &str, name: &str, icon: Option<&str>) -> Result<Guild> {
+        let mut body = json!({ "name": name });
+        if let Some(i) = icon {
+            body["icon"] = json!(i);
+        }
+        self.http().post(Route::GuildTemplate { code: std::borrow::Cow::Borrowed(code) }, body).await
+    }
+
+    /// List all templates owned by a guild.
+    ///
+    /// `GET /guilds/{guild.id}/templates`
+    async fn get_guild_templates(&self, guild_id: &GuildId) -> Result<Vec<Value>> {
+        self.http().get(Route::GuildTemplates { guild_id: guild_id.get() }).await
+    }
+
+    /// Create a new template snapshot of the guild.
+    ///
+    /// `POST /guilds/{guild.id}/templates`
+    async fn create_guild_template(&self, guild_id: &GuildId, name: &str, description: Option<&str>) -> Result<Value> {
+        let mut body = json!({ "name": name });
+        if let Some(d) = description {
+            body["description"] = json!(d);
+        }
+        self.http().post(Route::GuildTemplates { guild_id: guild_id.get() }, body).await
+    }
+
+    /// Re-snapshot the guild into an existing template.
+    ///
+    /// `PUT /guilds/{guild.id}/templates/{code}`
+    async fn sync_guild_template(&self, guild_id: &GuildId, code: &str) -> Result<Value> {
+        self.http().put(Route::GuildSpecificTemplate { guild_id: guild_id.get(), code: std::borrow::Cow::Borrowed(code) }, Value::Null).await
+    }
+
+    /// Edit a template's metadata.
+    ///
+    /// `PATCH /guilds/{guild.id}/templates/{code}`
+    async fn modify_guild_template(&self, guild_id: &GuildId, code: &str, body: Value) -> Result<Value> {
+        self.http().patch(Route::GuildSpecificTemplate { guild_id: guild_id.get(), code: std::borrow::Cow::Borrowed(code) }, body).await
+    }
+
+    /// Permanently delete a guild template.
+    ///
+    /// `DELETE /guilds/{guild.id}/templates/{code}`
+    async fn delete_guild_template(&self, guild_id: &GuildId, code: &str) -> Result<Value> {
+        self.http().delete_with_response(Route::GuildSpecificTemplate { guild_id: guild_id.get(), code: std::borrow::Cow::Borrowed(code) }).await
+    }
+
+    // ---------------------------------------------------------------------
+    // 8. Widget
+    // ---------------------------------------------------------------------
+
+    /// Fetch the widget settings (JSON, requires `MANAGE_GUILD`).
+    ///
+    /// `GET /guilds/{guild.id}/widget`
+    async fn get_guild_widget_settings(&self, guild_id: &GuildId) -> Result<Value> {
+        self.http().get(Route::GuildWidgetSettings { guild_id: guild_id.get() }).await
+    }
+
+    /// Modify the widget settings.
+    ///
+    /// `PATCH /guilds/{guild.id}/widget`
+    async fn modify_guild_widget(&self, guild_id: &GuildId, enabled: Option<bool>, channel_id: Option<&ChannelId>) -> Result<Value> {
+        let mut body = serde_json::Map::new();
+        if let Some(e) = enabled {
+            body.insert("enabled".into(), json!(e));
+        }
+        if let Some(cid) = channel_id {
+            body.insert("channel_id".into(), json!(cid.get().to_string()));
+        }
+        self.http().patch(Route::GuildWidgetSettings { guild_id: guild_id.get() }, Value::Object(body)).await
+    }
+
+    /// Fetch the public widget JSON. No authentication is enforced server-side
+    /// for this endpoint, but we still send the bearer header for consistency.
+    ///
+    /// `GET /guilds/{guild.id}/widget.json`
+    async fn get_guild_widget(&self, guild_id: &GuildId) -> Result<Value> {
+        self.http().get(Route::GuildWidgetJson { guild_id: guild_id.get() }).await
+    }
+
+    /// Fetch the widget PNG image. `style` is one of
+    /// `shield` | `banner1` | `banner2` | `banner3` | `banner4`.
+    ///
+    /// `GET /guilds/{guild.id}/widget.png?style={style}`
+    async fn get_guild_widget_image(&self, guild_id: &GuildId, style: Option<&str>) -> Result<Vec<u8>> {
+        self.http().get_bytes(Route::GuildWidgetImage {
+            guild_id: guild_id.get(),
+            style: style.map(|s| std::borrow::Cow::Owned(s.to_string())),
+        }).await
+    }
+
+    // ---------------------------------------------------------------------
+    // 9. Vanity URL
+    // ---------------------------------------------------------------------
+
+    /// Fetch the vanity invite URL for a guild (requires `MANAGE_GUILD`).
+    ///
+    /// `GET /guilds/{guild.id}/vanity-url`
+    async fn get_guild_vanity_url(&self, guild_id: &GuildId) -> Result<VanityUrl> {
+        self.http().get(Route::GuildVanityUrl { guild_id: guild_id.get() }).await
+    }
+
+    // ---------------------------------------------------------------------
+    // 10. Integrations
+    // ---------------------------------------------------------------------
+
+    /// List integrations attached to a guild (bots, Twitch, YouTube, etc.).
+    ///
+    /// `GET /guilds/{guild.id}/integrations`
+    async fn get_guild_integrations(&self, guild_id: &GuildId) -> Result<Vec<Value>> {
+        self.http().get(Route::GuildIntegrations { guild_id: guild_id.get() }).await
+    }
+
+    /// Detach (and kick the owning bot of) a guild integration.
+    ///
+    /// `DELETE /guilds/{guild.id}/integrations/{integration.id}`
+    async fn delete_guild_integration(&self, guild_id: &GuildId, integration_id: u64) -> Result<()> {
+        self.http().delete(Route::DeleteGuildIntegration { guild_id: guild_id.get(), integration_id }).await
+    }
+
+    // ---------------------------------------------------------------------
+    // 11. Prune
+    // ---------------------------------------------------------------------
+
+    /// Compute (without applying) the prune count for a guild.
+    ///
+    /// `days` defaults to 7 server-side; `include_roles` is a list of role IDs
+    /// that should still be considered for pruning (Discord excludes any
+    /// member with an extra role unless that role is whitelisted here).
+    ///
+    /// `GET /guilds/{guild.id}/prune?days=...&include_roles=...`
+    async fn get_guild_prune_count(&self, guild_id: &GuildId, days: Option<u32>, include_roles: Option<Vec<RoleId>>) -> Result<PruneCount> {
+        let days = days.map(|d| d.clamp(1, 30));
+        let include_roles = include_roles.and_then(|roles| {
+            if roles.is_empty() {
+                None
+            } else {
+                Some(std::borrow::Cow::Owned(roles.iter().map(|r| r.get().to_string()).collect::<Vec<_>>().join(",")))
+            }
+        });
+        self.http().get(Route::GuildPrune { guild_id: guild_id.get(), days, include_roles }).await
+    }
+
+    /// Begin a prune operation against the guild.
+    ///
+    /// When `compute_prune_count` is `false`, Discord returns `{ "pruned":
+    /// null }` immediately and runs the prune asynchronously — preferred for
+    /// large guilds.
+    ///
+    /// `POST /guilds/{guild.id}/prune`
+    async fn begin_guild_prune(&self, guild_id: &GuildId, days: Option<u32>, compute_prune_count: Option<bool>, include_roles: Option<Vec<RoleId>>, reason: Option<&str>) -> Result<PruneCount> {
+        let mut body = serde_json::Map::new();
+        if let Some(d) = days {
+            body.insert("days".into(), json!(d.clamp(1, 30)));
+        }
+        if let Some(c) = compute_prune_count {
+            body.insert("compute_prune_count".into(), json!(c));
+        }
+        if let Some(roles) = include_roles {
+            let role_ids: Vec<String> = roles.iter().map(|r| r.get().to_string()).collect();
+            body.insert("include_roles".into(), json!(role_ids));
+        }
+        if let Some(r) = reason {
+            body.insert("reason".into(), json!(r));
+        }
+        self.http().post(Route::GuildPrune { guild_id: guild_id.get(), days: None, include_roles: None }, Value::Object(body)).await
+    }
+
+    // ---------------------------------------------------------------------
+    // 12. Role member helpers
+    // ---------------------------------------------------------------------
+
+    /// Add a single role to a guild member without overwriting their other
+    /// roles.
+    ///
+    /// `PUT /guilds/{guild.id}/members/{user.id}/roles/{role.id}`
+    async fn add_guild_member_role(&self, guild_id: &GuildId, user_id: &UserId, role_id: &RoleId) -> Result<()> {
+        // Discord returns 204 No Content for this endpoint. The central client's
+        // `put<T>` always parses a JSON body, so we deserialize into
+        // `serde_json::Value` (which accepts `null`/empty) and discard it.
+        self.http()
+            .put::<serde_json::Value, _>(Route::AddGuildMemberRole { guild_id: guild_id.get(), user_id: user_id.get(), role_id: role_id.get() }, json!({}))
+            .await
+            .map(|_| ())
+    }
+
+    /// Remove a single role from a guild member without overwriting their
+    /// other roles.
+    ///
+    /// `DELETE /guilds/{guild.id}/members/{user.id}/roles/{role.id}`
+    async fn remove_guild_member_role(&self, guild_id: &GuildId, user_id: &UserId, role_id: &RoleId) -> Result<()> {
+        self.http().delete(Route::RemoveGuildMemberRole { guild_id: guild_id.get(), user_id: user_id.get(), role_id: role_id.get() }).await
     }
 }

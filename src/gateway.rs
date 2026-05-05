@@ -30,9 +30,35 @@ use crate::{
 /// Hardcoded gateway endpoint (mimics Chrome browser session)
 const GATEWAY_URL: &str = "wss://gateway-us-east1-c.discord.gg/?encoding=json&v=9";
 
+/// Gateway endpoint when zstd-stream compression is requested.
+const GATEWAY_URL_ZSTD: &str = "wss://gateway-us-east1-c.discord.gg/?encoding=json&v=9&compress=zstd-stream";
+
 /// Capabilities bitmask for the IDENTIFY payload (user-account equivalent of
 /// gateway intents). Mirrors discord-control's hardcoded value of 16381.
 const DEFAULT_CAPABILITIES: u32 = 16381;
+
+/// Default `large_threshold` per Discord spec; valid range is 50–250.
+/// Members past this count are treated as "large" guilds and require
+/// explicit RequestGuildMembers (opcode 8) calls to fetch.
+const DEFAULT_LARGE_THRESHOLD: u16 = 50;
+
+/// Compression flavour negotiated for the gateway connection.
+///
+/// Discord supports raw JSON, `zlib-stream`, and `zstd-stream` transports.
+/// Zlib is handled inline via [`Gateway::decompress_zlib`]; zstd decoding
+/// is not yet wired up — selecting [`CompressionKind::Zstd`] only flips
+/// the URL query parameter so the negotiation is visible to Discord.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CompressionKind {
+    /// No compression negotiated at the URL level (zlib payloads may still
+    /// arrive as binary frames and are decoded best-effort).
+    #[default]
+    None,
+    /// Negotiate `?compress=zlib-stream` (handled in-process today).
+    Zlib,
+    /// Negotiate `?compress=zstd-stream` (URL-only; decoder TODO).
+    Zstd,
+}
 
 /// Fallback build number used when the live fetch fails.
 const CLIENT_BUILD_NUMBER_FALLBACK: u32 = 534982;
@@ -137,14 +163,29 @@ enum GatewayLoopOutcome {
 /// See <https://discord.com/developers/docs/topics/opcodes-and-status-codes#gateway-gateway-close-event-codes>.
 fn classify_close(code: Option<u16>) -> GatewayLoopOutcome {
     match code {
+        // 4000 Unknown error — generic recoverable failure, attempt RESUME.
+        Some(4000) => GatewayLoopOutcome::Reconnect,
+        // 4001 Unknown opcode — we sent a bad opcode; safe to RESUME after fix.
+        Some(4001) => GatewayLoopOutcome::Reconnect,
+        // 4002 Decode error — Discord couldn't parse our payload; RESUME.
+        Some(4002) => GatewayLoopOutcome::Reconnect,
+        // 4003 Not authenticated — sent a non-IDENTIFY before IDENTIFY; the
+        // session is gone, force a fresh IDENTIFY rather than RESUME.
+        Some(4003) => GatewayLoopOutcome::ReconnectFresh,
         Some(4004) => GatewayLoopOutcome::Fatal { code: 4004, reason: "Authentication failed" },
+        // 4005 Already authenticated — odd state but the session is still valid.
+        Some(4005) => GatewayLoopOutcome::Reconnect,
+        // 4007 Invalid seq, 4008 Rate limited, 4009 Session timed out.
+        // 4008 is recoverable per docs but a Reconnect-with-backoff is appropriate;
+        // the supervisor's outer reconnect loop already applies backoff on connect failure.
+        Some(4008) => GatewayLoopOutcome::Reconnect,
+        // Invalid seq / session timed out — session is unrecoverable, force re-IDENTIFY.
+        Some(4007 | 4009) => GatewayLoopOutcome::ReconnectFresh,
         Some(4010) => GatewayLoopOutcome::Fatal { code: 4010, reason: "Invalid shard" },
         Some(4011) => GatewayLoopOutcome::Fatal { code: 4011, reason: "Sharding required" },
         Some(4012) => GatewayLoopOutcome::Fatal { code: 4012, reason: "Invalid API version" },
         Some(4013) => GatewayLoopOutcome::Fatal { code: 4013, reason: "Invalid intents" },
         Some(4014) => GatewayLoopOutcome::Fatal { code: 4014, reason: "Disallowed intents" },
-        // Invalid seq / rate-limited / session timed out — session is unrecoverable, force re-IDENTIFY.
-        Some(4007..=4009) => GatewayLoopOutcome::ReconnectFresh,
         Some(_) | None => GatewayLoopOutcome::Reconnect,
     }
 }
@@ -156,6 +197,17 @@ pub struct Gateway {
     /// Capabilities bitmask sent in the IDENTIFY payload (user-account
     /// equivalent of intents)
     capabilities: u32,
+    /// Optional gateway intents bitmask for bot-token connections. When
+    /// `Some`, the IDENTIFY payload includes an `intents` field alongside
+    /// `capabilities` so the same struct can drive both user and bot tokens.
+    intents: Option<u64>,
+    /// `large_threshold` value sent in IDENTIFY (50–250). Discord uses this
+    /// to decide whether a guild's full member list is delivered in
+    /// GUILD_CREATE or must be requested via opcode 8.
+    large_threshold: u16,
+    /// Negotiated transport compression flavour. Currently only changes the
+    /// gateway URL; zstd payload decoding is a future task.
+    compression_kind: CompressionKind,
     writer: Arc<RwLock<Option<WsWriter>>>,
     event_sender: broadcast::Sender<DispatchEvent>,
     heartbeat_interval: Arc<RwLock<u64>>,
@@ -197,6 +249,9 @@ impl Gateway {
                 token,
                 custom_status,
                 capabilities,
+                intents: None,
+                large_threshold: DEFAULT_LARGE_THRESHOLD,
+                compression_kind: CompressionKind::None,
                 writer: Arc::new(RwLock::new(None)),
                 event_sender,
                 heartbeat_interval: Arc::new(RwLock::new(41250)),
@@ -213,6 +268,43 @@ impl Gateway {
         )
     }
 
+    /// Set gateway intents for bot-token connections.
+    ///
+    /// When set, the IDENTIFY payload will include an `intents` field
+    /// alongside the existing `capabilities` field, allowing the same
+    /// gateway to drive bot tokens. User-token semantics are unaffected
+    /// when this is left as `None` (the default).
+    pub fn with_intents(mut self, intents: u64) -> Self {
+        self.intents = Some(intents);
+        self
+    }
+
+    /// Override the IDENTIFY `large_threshold` (50–250 per Discord docs).
+    ///
+    /// Values outside the valid range are clamped.
+    pub fn with_large_threshold(mut self, large_threshold: u16) -> Self {
+        self.large_threshold = large_threshold.clamp(50, 250);
+        self
+    }
+
+    /// Select the transport compression flavour used when (re)connecting.
+    ///
+    /// Today only changes the gateway URL query parameter; zstd payload
+    /// decoding is implemented in a follow-up task.
+    pub fn with_compression(mut self, kind: CompressionKind) -> Self {
+        self.compression_kind = kind;
+        self
+    }
+
+    /// Return the gateway URL appropriate for the current compression setting.
+    fn gateway_url(&self) -> &'static str {
+        match self.compression_kind {
+            CompressionKind::Zstd => GATEWAY_URL_ZSTD,
+            // TODO: add a dedicated zlib-stream URL once we negotiate it explicitly.
+            CompressionKind::Zlib | CompressionKind::None => GATEWAY_URL,
+        }
+    }
+
     /// Get event sender for subscribing
     pub fn event_sender(&self) -> broadcast::Sender<DispatchEvent> {
         self.event_sender.clone()
@@ -222,7 +314,8 @@ impl Gateway {
     pub async fn connect(&mut self) -> Result<()> {
         *self.stage.write().await = ConnectionStage::Connecting;
 
-        let (ws_stream, _) = connect_async(GATEWAY_URL).await?;
+        let url = self.gateway_url();
+        let (ws_stream, _) = connect_async(url).await?;
         let (writer, reader) = ws_stream.split();
 
         *self.writer.write().await = Some(writer);
@@ -301,6 +394,9 @@ impl Gateway {
         let token = self.token.clone();
         let custom_status = self.custom_status;
         let capabilities = self.capabilities;
+        let intents = self.intents;
+        let large_threshold = self.large_threshold;
+        let gateway_url: &'static str = self.gateway_url();
         let writer = Arc::clone(&self.writer);
         let event_sender = self.event_sender.clone();
         let heartbeat_interval = Arc::clone(&self.heartbeat_interval);
@@ -333,7 +429,7 @@ impl Gateway {
                         awaiting_ack.store(false, Ordering::SeqCst);
                         *last_sent.write().await = None;
 
-                        match connect_async(GATEWAY_URL).await {
+                        match connect_async(gateway_url).await {
                             Ok((ws_stream, _)) => {
                                 let (w, r) = ws_stream.split();
                                 *writer.write().await = Some(w);
@@ -380,7 +476,7 @@ impl Gateway {
                             match msg {
                                 Some(Ok(WsMessage::Text(text))) => {
                                     if let Err(e) = Self::handle_message(
-                                        &text, &token, custom_status, capabilities,
+                                        &text, &token, custom_status, capabilities, intents, large_threshold,
                                         &writer, &event_sender, &heartbeat_interval,
                                         &sequence, &session_id, &mut heartbeat_handle,
                                         &awaiting_ack, &last_sent, &latency, &stage, &pending_guilds,
@@ -399,7 +495,7 @@ impl Gateway {
                                     match Self::decompress_zlib(&bytes) {
                                         Ok(text) => {
                                             if let Err(e) = Self::handle_message(
-                                                &text, &token, custom_status, capabilities,
+                                                &text, &token, custom_status, capabilities, intents, large_threshold,
                                                 &writer, &event_sender, &heartbeat_interval,
                                                 &sequence, &session_id, &mut heartbeat_handle,
                                                 &awaiting_ack, &last_sent, &latency, &stage, &pending_guilds,
@@ -477,7 +573,7 @@ impl Gateway {
 
     /// Handle a single gateway message
     #[allow(clippy::too_many_arguments)]
-    async fn handle_message(text: &str, token: &str, custom_status: UserStatus, capabilities: u32, writer: &Arc<RwLock<Option<WsWriter>>>, event_sender: &broadcast::Sender<DispatchEvent>, heartbeat_interval: &Arc<RwLock<u64>>, sequence: &Arc<RwLock<Option<u64>>>, session_id: &Arc<RwLock<Option<String>>>, heartbeat_handle: &mut Option<tokio::task::JoinHandle<()>>, awaiting_ack: &Arc<AtomicBool>, last_sent: &Arc<RwLock<Option<Instant>>>, latency: &Arc<RwLock<Option<Duration>>>, stage: &Arc<RwLock<ConnectionStage>>, pending_guilds: &Arc<AtomicUsize>) -> Result<()> {
+    async fn handle_message(text: &str, token: &str, custom_status: UserStatus, capabilities: u32, intents: Option<u64>, large_threshold: u16, writer: &Arc<RwLock<Option<WsWriter>>>, event_sender: &broadcast::Sender<DispatchEvent>, heartbeat_interval: &Arc<RwLock<u64>>, sequence: &Arc<RwLock<Option<u64>>>, session_id: &Arc<RwLock<Option<String>>>, heartbeat_handle: &mut Option<tokio::task::JoinHandle<()>>, awaiting_ack: &Arc<AtomicBool>, last_sent: &Arc<RwLock<Option<Instant>>>, latency: &Arc<RwLock<Option<Duration>>>, stage: &Arc<RwLock<ConnectionStage>>, pending_guilds: &Arc<AtomicUsize>) -> Result<()> {
         let payload: GatewayPayload = serde_json::from_str(text)?;
         let opcode = Opcode::from(payload.op);
 
@@ -510,10 +606,30 @@ impl Gateway {
                         }
 
                         *heartbeat_handle = Some(tokio::spawn(async move {
+                            // Jittered first heartbeat per Discord gateway spec
+                            let initial_delay_ms = (interval_ms as f64 * rand::random::<f64>()) as u64;
+                            tokio::time::sleep(Duration::from_millis(initial_delay_ms)).await;
+
                             let mut ticker = tokio::time::interval(Duration::from_millis(interval_ms));
                             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                            // Skip the first immediate tick
+                            // Consume the immediate first tick — we already waited the jittered delay above.
                             ticker.tick().await;
+
+                            // Send the first (jittered) heartbeat immediately so the loop body
+                            // can uniformly handle subsequent ticks below.
+                            {
+                                let seq = *seq_clone.read().await;
+                                let heartbeat = json!({ "op": 1, "d": seq });
+                                if let Some(ref mut w) = *writer_clone.write().await {
+                                    if let Err(e) = w.send(WsMessage::Text(heartbeat.to_string().into())).await {
+                                        error!(error = %e, "Failed to send initial (jittered) heartbeat");
+                                        return;
+                                    }
+                                    *last_sent_clone.write().await = Some(Instant::now());
+                                    awaiting_ack_clone.store(true, Ordering::SeqCst);
+                                    debug!("Sent jittered initial heartbeat after {}ms, awaiting ACK", initial_delay_ms);
+                                }
+                            }
 
                             loop {
                                 ticker.tick().await;
@@ -538,7 +654,7 @@ impl Gateway {
                                 let seq = *seq_clone.read().await;
                                 let heartbeat = json!({ "op": 1, "d": seq });
                                 if let Some(ref mut w) = *writer_clone.write().await {
-                                    if let Err(e) = w.send(WsMessage::Text(heartbeat.to_string())).await {
+                                    if let Err(e) = w.send(WsMessage::Text(heartbeat.to_string().into())).await {
                                         error!(error = %e, "Failed to send heartbeat");
                                         break;
                                     }
@@ -564,7 +680,7 @@ impl Gateway {
                             Self::send_resume(writer, token, session_id, sequence).await?;
                         } else {
                             *stage.write().await = ConnectionStage::Identifying;
-                            Self::send_identify(writer, token, custom_status, capabilities).await?;
+                            Self::send_identify(writer, token, custom_status, capabilities, intents, large_threshold).await?;
                         }
                     }
                 }
@@ -588,7 +704,11 @@ impl Gateway {
                         if let Some(d) = &payload.d {
                             if let Some(sid) = d["session_id"].as_str() {
                                 *session_id.write().await = Some(sid.to_string());
-                                info!("Captured session_id: {}", sid);
+                                // Demoted to debug: session_id is a
+                                // re-identification credential that lets a
+                                // holder resume our gateway. Don't ship it
+                                // into stderr/log files at info level.
+                                debug!("Captured session_id: {}", sid);
                             }
                             // Count unavailable guilds so we know when CACHE_READY fires.
                             let guild_count = d["guilds"].as_array().map(|g| g.len()).unwrap_or(0);
@@ -596,7 +716,7 @@ impl Gateway {
                             debug!("READY: waiting for {} GUILD_CREATE(s) before CACHE_READY", guild_count);
                             if guild_count == 0 {
                                 // No guilds — fire immediately after READY is dispatched.
-                                let cache_ready = DispatchEvent { event_type: "CACHE_READY".to_string(), data: Value::Null };
+                                let cache_ready = DispatchEvent::new("CACHE_READY".to_string(), Value::Null);
                                 if let Err(e) = event_sender.send(cache_ready) {
                                     warn!("Failed to dispatch CACHE_READY: {}", e);
                                 }
@@ -614,7 +734,7 @@ impl Gateway {
                         if let Ok(1) = prev {
                             // We just decremented from 1 → 0: all guilds are ready.
                             info!("All guilds received — firing CACHE_READY");
-                            let cache_ready = DispatchEvent { event_type: "CACHE_READY".to_string(), data: Value::Null };
+                            let cache_ready = DispatchEvent::new("CACHE_READY".to_string(), Value::Null);
                             if let Err(e) = event_sender.send(cache_ready) {
                                 warn!("Failed to dispatch CACHE_READY: {}", e);
                             }
@@ -627,7 +747,7 @@ impl Gateway {
                         info!("Session successfully resumed");
                     }
 
-                    let event = DispatchEvent { event_type: event_type.clone(), data: payload.d.unwrap_or(Value::Null) };
+                    let event = DispatchEvent::new(event_type.clone(), payload.d.unwrap_or(Value::Null));
                     if let Err(e) = event_sender.send(event) {
                         warn!("Failed to dispatch event '{}': no active receivers ({})", event_type, e);
                     }
@@ -640,15 +760,39 @@ impl Gateway {
                 return Err(crate::error::DiscordError::GatewayReconnectRequested);
             }
             Opcode::InvalidSession => {
-                warn!("Received invalid session");
+                // Per docs the `d` field is a boolean: true means the session is
+                // still resumable (Discord just dropped this socket), false means
+                // it's gone for good and we must re-IDENTIFY from scratch.
+                let resumable = payload.d.as_ref().and_then(|v| v.as_bool()).unwrap_or(false);
+                warn!(resumable, "Received Invalid Session (op 9)");
 
-                // Clear session state so we perform a full identify next time
-                *session_id.write().await = None;
-                *sequence.write().await = None;
+                // Discord docs recommend a small randomized delay before responding
+                // to op 9 so a herd of clients don't reconnect simultaneously.
+                let delay_ms = 1000 + (rand::random::<u64>() % 4000);
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
 
-                // Re-identify after delay
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                Self::send_identify(writer, token, custom_status, capabilities).await?;
+                if resumable {
+                    // Attempt RESUME with the existing session if we still have it.
+                    let has_session = {
+                        let sid = session_id.read().await;
+                        let seq = sequence.read().await;
+                        sid.is_some() && seq.is_some()
+                    };
+                    if has_session {
+                        *stage.write().await = ConnectionStage::Resuming;
+                        Self::send_resume(writer, token, session_id, sequence).await?;
+                    } else {
+                        warn!("Op 9 said resumable but no cached session_id/seq — re-identifying instead");
+                        *stage.write().await = ConnectionStage::Identifying;
+                        Self::send_identify(writer, token, custom_status, capabilities, intents, large_threshold).await?;
+                    }
+                } else {
+                    // Session is gone — clear state and perform a full IDENTIFY.
+                    *session_id.write().await = None;
+                    *sequence.write().await = None;
+                    *stage.write().await = ConnectionStage::Identifying;
+                    Self::send_identify(writer, token, custom_status, capabilities, intents, large_threshold).await?;
+                }
             }
             _ => {
                 debug!("Received opcode: {:?}", opcode);
@@ -674,57 +818,74 @@ impl Gateway {
             });
 
             if let Some(ref mut w) = *writer.write().await {
-                w.send(WsMessage::Text(resume.to_string())).await?;
-                info!("Sent resume payload (session: {}, seq: {})", sid, seq);
+                w.send(WsMessage::Text(resume.to_string().into())).await?;
+                // session_id is sensitive (see READY handler note); demoted.
+                debug!("Sent resume payload (session: {}, seq: {})", sid, seq);
             }
         }
 
         Ok(())
     }
 
-    /// Send the identify payload to authenticate
-    async fn send_identify(writer: &Arc<RwLock<Option<WsWriter>>>, token: &str, status: UserStatus, capabilities: u32) -> Result<()> {
-        let identify = json!({
-            "op": 2,
-            "d": {
-                "token": token,
-                "capabilities": capabilities,
-                "properties": {
-                    "os": "Windows",
-                    "browser": "Chrome",
-                    "device": "",
-                    "system_locale": "en-US",
-                    "browser_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "browser_version": "120.0.0.0",
-                    "os_version": "10",
-                    "referrer": "",
-                    "referring_domain": "",
-                    "referrer_current": "",
-                    "referring_domain_current": "",
-                    "release_channel": "stable",
-                    "client_build_number": client_build_number().await,
-                    "client_event_source": null
-                },
-                "presence": {
-                    "status": status.as_str(),
-                    "since": 0,
-                    "activities": [],
-                    "afk": false
-                },
-                "compress": false,
-                "client_state": {
-                    "guild_versions": {},
-                    "highest_last_message_id": "0",
-                    "read_state_version": 0,
-                    "user_guild_settings_version": -1,
-                    "private_channels_version": "0",
-                    "api_code_version": 0
-                }
+    /// Send the identify payload to authenticate.
+    ///
+    /// `intents` is honoured for bot-token connections — when `Some` we add an
+    /// `intents` field to the payload alongside the existing `capabilities`
+    /// field used for user tokens. `large_threshold` is forwarded as required
+    /// by the Discord docs (valid range 50–250; clamped here as belt-and-braces).
+    // TODO: route `large_threshold` through `DiscordUserBuilder` so callers can
+    // tune it without touching `Gateway` directly.
+    async fn send_identify(writer: &Arc<RwLock<Option<WsWriter>>>, token: &str, status: UserStatus, capabilities: u32, intents: Option<u64>, large_threshold: u16) -> Result<()> {
+        let large_threshold = large_threshold.clamp(50, 250);
+        let mut data = json!({
+            "token": token,
+            "capabilities": capabilities,
+            "large_threshold": large_threshold,
+            "properties": {
+                "os": "Windows",
+                "browser": "Chrome",
+                "device": "",
+                "system_locale": "en-US",
+                "browser_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "browser_version": "120.0.0.0",
+                "os_version": "10",
+                "referrer": "",
+                "referring_domain": "",
+                "referrer_current": "",
+                "referring_domain_current": "",
+                "release_channel": "stable",
+                "client_build_number": client_build_number().await,
+                "client_event_source": null
+            },
+            "presence": {
+                "status": status.as_str(),
+                "since": 0,
+                "activities": [],
+                "afk": false
+            },
+            "compress": false,
+            "client_state": {
+                "guild_versions": {},
+                "highest_last_message_id": "0",
+                "read_state_version": 0,
+                "user_guild_settings_version": -1,
+                "private_channels_version": "0",
+                "api_code_version": 0
             }
         });
 
+        // Bot-token mode: include `intents` alongside `capabilities`. User-token
+        // mode (intents == None) keeps the existing payload shape unchanged.
+        if let Some(intents) = intents {
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("intents".to_string(), Value::from(intents));
+            }
+        }
+
+        let identify = json!({ "op": 2, "d": data });
+
         if let Some(ref mut w) = *writer.write().await {
-            w.send(WsMessage::Text(identify.to_string())).await?;
+            w.send(WsMessage::Text(identify.to_string().into())).await?;
             info!("Sent identify payload");
         }
 
@@ -751,7 +912,7 @@ impl Gateway {
             }
         });
         if let Some(ref mut w) = *self.writer.write().await {
-            w.send(WsMessage::Text(payload.to_string())).await?;
+            w.send(WsMessage::Text(payload.to_string().into())).await?;
         }
         Ok(())
     }
@@ -769,16 +930,74 @@ impl Gateway {
         });
 
         if let Some(ref mut w) = *self.writer.write().await {
-            w.send(WsMessage::Text(presence.to_string())).await?;
+            w.send(WsMessage::Text(presence.to_string().into())).await?;
         }
 
+        Ok(())
+    }
+
+    /// Send a Request Guild Members (opcode 8) payload.
+    ///
+    /// Mirrors Discord's documented op-8 shape:
+    /// ```json
+    /// { "guild_id": "...", "query": "ab", "limit": 0,
+    ///   "presences": false, "user_ids": ["..."], "nonce": "..." }
+    /// ```
+    /// Pass `query = None` to use `user_ids` instead, or `query = Some("")`
+    /// with `limit = 0` to request the full member list (subject to Discord's
+    /// large-guild rules).
+    ///
+    /// All optional fields are omitted from the JSON when `None` so we don't
+    /// trip Discord's strict payload validator with stray nulls.
+    pub async fn request_guild_members(&self, guild_id: u64, query: Option<&str>, limit: u32, presences: Option<bool>, user_ids: Option<&[u64]>, nonce: Option<&str>) -> Result<()> {
+        let mut d = serde_json::Map::new();
+        d.insert("guild_id".to_string(), Value::from(guild_id.to_string()));
+        if let Some(q) = query {
+            d.insert("query".to_string(), Value::from(q));
+        }
+        d.insert("limit".to_string(), Value::from(limit));
+        if let Some(p) = presences {
+            d.insert("presences".to_string(), Value::from(p));
+        }
+        if let Some(ids) = user_ids {
+            let arr: Vec<Value> = ids.iter().map(|id| Value::from(id.to_string())).collect();
+            d.insert("user_ids".to_string(), Value::from(arr));
+        }
+        if let Some(n) = nonce {
+            d.insert("nonce".to_string(), Value::from(n));
+        }
+
+        let payload = json!({
+            "op": Opcode::RequestGuildMembers as u8,
+            "d": Value::Object(d),
+        });
+        if let Some(ref mut w) = *self.writer.write().await {
+            w.send(WsMessage::Text(payload.to_string().into())).await?;
+        }
+        Ok(())
+    }
+
+    /// Send a Request Soundboard Sounds (opcode 31) payload.
+    ///
+    /// Discord's docs define the payload as `{ "guild_ids": ["..."] }`
+    /// (snowflakes serialised as strings). Discord replies with one
+    /// `SOUNDBOARD_SOUNDS` dispatch per guild.
+    pub async fn request_soundboard_sounds(&self, guild_ids: &[u64]) -> Result<()> {
+        let ids: Vec<Value> = guild_ids.iter().map(|id| Value::from(id.to_string())).collect();
+        let payload = json!({
+            "op": 31,
+            "d": { "guild_ids": ids }
+        });
+        if let Some(ref mut w) = *self.writer.write().await {
+            w.send(WsMessage::Text(payload.to_string().into())).await?;
+        }
         Ok(())
     }
 
     /// Send raw JSON payload
     pub async fn send_raw(&self, payload: Value) -> Result<()> {
         if let Some(ref mut w) = *self.writer.write().await {
-            w.send(WsMessage::Text(payload.to_string())).await?;
+            w.send(WsMessage::Text(payload.to_string().into())).await?;
         }
         Ok(())
     }

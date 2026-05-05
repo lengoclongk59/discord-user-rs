@@ -47,6 +47,39 @@ pub struct User {
     pub mobile: bool,
     #[serde(default)]
     pub desktop: bool,
+    /// Whether the user is an official Discord System user (urgent messages).
+    #[serde(default)]
+    pub system: Option<bool>,
+    /// User's chosen language option (e.g., `en-US`).
+    #[serde(default)]
+    pub locale: Option<String>,
+    /// Primary guild / server tag identity (clan tag system).
+    #[serde(default)]
+    pub primary_guild: Option<PrimaryGuild>,
+    /// Collectibles object (e.g., owned nameplates, avatar decorations).
+    #[serde(default)]
+    pub collectibles: Option<serde_json::Value>,
+}
+
+/// Primary guild / server tag identity for a user.
+///
+/// Discord's "Server Tags" / "Clans" feature lets users display a 4-character
+/// tag and badge from a single guild. All fields are optional because Discord
+/// returns `null`s when the user has no primary guild selected.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PrimaryGuild {
+    /// Snowflake ID of the guild whose identity is displayed.
+    #[serde(default)]
+    pub identity_guild_id: Option<String>,
+    /// Whether the user has the primary-guild identity feature enabled.
+    #[serde(default)]
+    pub identity_enabled: Option<bool>,
+    /// 4-character text tag shown next to the username.
+    #[serde(default)]
+    pub tag: Option<String>,
+    /// Badge image hash for the primary guild's tag badge.
+    #[serde(default)]
+    pub badge: Option<String>,
 }
 
 impl User {
@@ -145,6 +178,16 @@ pub struct Member {
     pub flags: u64,
     #[serde(default)]
     pub communication_disabled_until: Option<String>,
+    /// Guild-specific member banner hash.
+    #[serde(default)]
+    pub banner: Option<String>,
+    /// Computed total permissions for this member, only present in
+    /// interaction payloads (the gateway/REST member objects omit it).
+    #[serde(default)]
+    pub permissions: Option<String>,
+    /// Member-level avatar decoration data (currently a free-form object).
+    #[serde(default)]
+    pub avatar_decoration_data: Option<serde_json::Value>,
 }
 
 impl Member {
@@ -302,4 +345,44 @@ pub struct MutualGuild {
     /// User's nickname in this guild
     #[serde(default)]
     pub nick: Option<String>,
+}
+
+/// A user's third-party connected account (typed view of the
+/// `/users/@me/connections` endpoint).
+///
+/// This is the strongly-typed counterpart to [`ConnectedAccount`], which is
+/// the slimmer profile-embedded variant. Use `Connection` when working with
+/// the dedicated connections endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Connection {
+    /// ID of the account on the external service.
+    pub id: String,
+    /// Display name of the account on the external service.
+    pub name: String,
+    /// Service name (e.g., `spotify`, `youtube`, `twitter`, `github`).
+    #[serde(rename = "type")]
+    pub connection_type: String,
+    /// Whether the connection has been revoked.
+    #[serde(default)]
+    pub revoked: Option<bool>,
+    /// Server integrations attached to this connection (raw JSON; shape
+    /// varies per service).
+    #[serde(default)]
+    pub integrations: Option<Vec<serde_json::Value>>,
+    /// Whether the connection is verified.
+    #[serde(default)]
+    pub verified: bool,
+    /// Whether friend sync is enabled for this connection.
+    #[serde(default)]
+    pub friend_sync: bool,
+    /// Whether activity from this service is shown in presence updates.
+    #[serde(default)]
+    pub show_activity: bool,
+    /// Whether the connection has a corresponding third-party OAuth2 token
+    /// allowing two-way operations.
+    #[serde(default)]
+    pub two_way_link: bool,
+    /// Visibility level: `0` = none (only the user), `1` = everyone.
+    #[serde(default)]
+    pub visibility: u8,
 }

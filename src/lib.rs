@@ -49,3 +49,6 @@ pub use typed_events::TypedEvent;
 pub use types::*;
 
 pub mod context;
+
+#[cfg(feature = "cli")]
+pub mod cli;

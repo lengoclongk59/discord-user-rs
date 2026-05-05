@@ -1,14 +1,14 @@
 //! Core Discord types and data structures
 
-mod colour;
-mod enums;
-mod guild;
-mod ids;
-mod image_hash;
-mod message;
-mod relationship;
-mod timestamp;
-mod user;
+pub mod colour;
+pub mod enums;
+pub mod guild;
+pub mod ids;
+pub mod image_hash;
+pub mod message;
+pub mod relationship;
+pub mod timestamp;
+pub mod user;
 
 pub use colour::*;
 pub use enums::*;

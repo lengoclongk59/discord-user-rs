@@ -5,6 +5,27 @@ use thiserror::Error;
 /// Result type alias for discord operations
 pub type Result<T> = std::result::Result<T, DiscordError>;
 
+/// Redact the URL path from a `reqwest::Error`'s Display output.
+///
+/// `reqwest::Error::Display` embeds the full request URL by default. Several
+/// Discord routes (`ExecuteWebhook`, `EditWebhookWithToken`,
+/// `DeleteWebhookWithToken`, interaction callbacks) include a webhook token
+/// inside the URL path — leaking that token via stderr / log files would
+/// expose a credential that lets anyone post as the webhook. We rewrite the
+/// URL down to its origin (`scheme://host`) before display.
+fn redact_reqwest_err(e: &reqwest::Error) -> String {
+    let mut s = e.to_string();
+    if let Some(url) = e.url() {
+        let raw = url.as_str();
+        let host = url.host_str().unwrap_or("");
+        let origin = format!("{}://{}", url.scheme(), host);
+        if !raw.is_empty() && raw != origin {
+            s = s.replace(raw, &origin);
+        }
+    }
+    s
+}
+
 /// Errors that can occur during Discord operations
 #[derive(Error, Debug)]
 pub enum DiscordError {
@@ -12,8 +33,9 @@ pub enum DiscordError {
     #[error("WebSocket error: {0}")]
     WebSocket(Box<tokio_tungstenite::tungstenite::Error>),
 
-    /// HTTP request error
-    #[error("HTTP error: {0}")]
+    /// HTTP request error. Display redacts URL paths to avoid leaking webhook
+    /// tokens (which Discord embeds in `ExecuteWebhook` / `*WithToken` routes).
+    #[error("HTTP error: {}", redact_reqwest_err(.0))]
     Http(#[from] reqwest::Error),
 
     /// JSON serialization/deserialization error
@@ -67,6 +89,15 @@ pub enum DiscordError {
     /// Maximum retries exceeded
     #[error("Maximum retries exceeded")]
     MaxRetriesExceeded,
+
+    /// Cloudflare invalid-request budget threshold reached.
+    ///
+    /// Discord's CDN tracks invalid responses (HTTP 401/403/429) per IP and
+    /// applies a temporary IP ban (Cloudflare error 1015) when the count
+    /// exceeds 10,000 within a rolling 10-minute window. Callers that opt in
+    /// to fail-fast behaviour can observe this variant before the ban hits.
+    #[error("invalid-request budget threshold reached: {count} invalid responses in the last 10 minutes (Cloudflare 1015 risk)")]
+    InvalidRequestThresholdReached { count: usize },
 
     /// Gateway requested a reconnection (opcode 7)
     #[error("Gateway requested reconnection")]
@@ -239,7 +270,7 @@ impl DiscordError {
             Self::ServiceError { .. } => true,
 
             // Auth errors, invalid data, permissions, etc. are not retryable
-            Self::VerificationRequired | Self::CaptchaRequired { .. } | Self::AuthenticationFailed | Self::NotInitialized | Self::InvalidToken | Self::NotFound { .. } | Self::PermissionDenied { .. } | Self::InvalidRequest(_) | Self::MaxRetriesExceeded | Self::Json(_) | Self::Other(_) | Self::Model(_) | Self::UnexpectedStatusCode { .. } => false,
+            Self::VerificationRequired | Self::CaptchaRequired { .. } | Self::AuthenticationFailed | Self::NotInitialized | Self::InvalidToken | Self::NotFound { .. } | Self::PermissionDenied { .. } | Self::InvalidRequest(_) | Self::MaxRetriesExceeded | Self::Json(_) | Self::Other(_) | Self::Model(_) | Self::UnexpectedStatusCode { .. } | Self::InvalidRequestThresholdReached { .. } => false,
         }
     }
 }

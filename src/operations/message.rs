@@ -1,5 +1,6 @@
 //! Message operations for DiscordUser
 
+use std::borrow::Cow;
 use std::time::Duration;
 
 #[cfg(feature = "collector")]
@@ -10,6 +11,7 @@ use uuid::Uuid;
 use crate::{
     context::DiscordContext,
     error::{DiscordError, Result, WithContext},
+    route::Route,
     types::*,
 };
 
@@ -356,6 +358,64 @@ pub trait MessageOps: DiscordContext {
             let uid = user_id.parse::<u64>().map_err(|e| crate::error::DiscordError::InvalidRequest(format!("Invalid user_id '{}': {}", user_id, e)))?;
             self.http().delete(crate::route::Route::RemoveUserReaction { channel_id: channel_id.get(), message_id: message_id.get(), emoji: &encoded_emoji, user_id: uid }).await
         }
+    }
+
+    /// Get the users who reacted to a message with a specific emoji.
+    ///
+    /// Discord endpoint: `GET /channels/{channel.id}/messages/{message.id}/reactions/{emoji}`
+    ///
+    /// # Arguments
+    /// * `channel_id` - The channel ID
+    /// * `message_id` - The message ID
+    /// * `emoji` - The emoji to query. For unicode emoji, pass the emoji
+    ///   character; for custom emoji, use the format `name:id`. The value is
+    ///   URL-encoded internally, mirroring [`MessageOps::add_reaction`].
+    /// * `after` - Only return users whose ID is greater than this snowflake
+    /// * `limit` - Max users to return (1-100, default 25)
+    /// * `reaction_type` - 0 = normal (default), 1 = burst/super reactions
+    ///
+    /// Dispatches via the central HTTP client using
+    /// [`Route::GetReactions`].
+    async fn get_reactions(&self, channel_id: u64, message_id: u64, emoji: &str, after: Option<u64>, limit: Option<u32>, reaction_type: Option<u8>) -> Result<Vec<crate::types::user::User>> {
+        self.http().get(Route::GetReactions { channel_id, message_id, emoji: Cow::Borrowed(emoji), after, limit, reaction_type }).await
+    }
+
+    /// Fetch all users who reacted with a given emoji, paginating with `after`
+    /// until Discord returns a short page.
+    ///
+    /// Mirrors the style of [`MessageOps::get_channel_messages_paginated`]:
+    /// pages of `limit` (default 100) are fetched until a page comes back
+    /// shorter than `limit`, indicating exhaustion.
+    ///
+    /// # Arguments
+    /// * `channel_id` - The channel ID
+    /// * `message_id` - The message ID
+    /// * `emoji` - Emoji string (same format as [`MessageOps::add_reaction`])
+    /// * `limit` - Page size (1-100, default 100). Also used as the
+    ///   short-page sentinel.
+    /// * `reaction_type` - 0 = normal (default), 1 = burst/super reactions
+    async fn get_all_reactions(&self, channel_id: u64, message_id: u64, emoji: &str, limit: Option<u32>, reaction_type: Option<u8>) -> Result<Vec<crate::types::user::User>> {
+        let page_size = limit.unwrap_or(100).clamp(1, 100);
+        let mut all: Vec<crate::types::user::User> = Vec::new();
+        let mut after: Option<u64> = None;
+
+        loop {
+            let page = self.get_reactions(channel_id, message_id, emoji, after, Some(page_size), reaction_type).await?;
+            let page_len = page.len() as u32;
+            if let Some(last) = page.last() {
+                after = last.id.parse::<u64>().ok();
+            }
+            all.extend(page);
+            if page_len < page_size {
+                break;
+            }
+            if after.is_none() {
+                // Defensive: without a cursor we'd loop forever
+                break;
+            }
+        }
+
+        Ok(all)
     }
 
     /// Send a message with an embedded poll.
