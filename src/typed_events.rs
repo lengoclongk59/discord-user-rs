@@ -304,29 +304,135 @@ pub struct UserUpdateEvent {
 }
 
 /// INTERACTION_CREATE event data - sent when user interacts with application
-/// commands
-#[derive(Debug, Clone, Deserialize)]
+/// commands, message components, or modal submissions.
+///
+/// Mirrors Discord's [Interaction](https://discord.com/developers/docs/interactions/receiving-and-responding#interaction-object)
+/// object. The [`Interaction`] type alias points at this struct so consumers
+/// can refer to either name.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InteractionCreateEvent {
     pub id: String,
     pub application_id: String,
     #[serde(rename = "type")]
     pub interaction_type: u8,
-    #[serde(default)]
-    pub data: Option<Value>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<InteractionData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guild: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guild_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member: Option<Member>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<User>,
     #[serde(default)]
     pub token: String,
     #[serde(default)]
     pub version: u8,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<Message>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_permissions: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guild_locale: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entitlements: Option<Vec<Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorizing_integration_owners: Option<std::collections::HashMap<String, String>>,
+    /// Interaction context type (`InteractionContextType`):
+    /// 0 = GUILD, 1 = BOT_DM, 2 = PRIVATE_CHANNEL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment_size_limit: Option<u64>,
+}
+
+/// Type alias mirroring Discord's `Interaction` object terminology.
+///
+/// `InteractionCreateEvent` and `Interaction` are the same struct — the alias
+/// exists so consumers can refer to the type by either name.
+pub type Interaction = InteractionCreateEvent;
+
+/// Inner `data` payload of an interaction.
+///
+/// Discord doesn't tag this field directly — its shape is dictated by the
+/// parent interaction's `type`. We deserialize it via `#[serde(untagged)]`
+/// which tries each variant in order and picks the first that matches.
+/// `ApplicationCommandData` is tried first because it has the most
+/// distinguishing required fields (`id` + `name` + `type`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum InteractionData {
+    /// `APPLICATION_COMMAND` (type 2) and autocomplete (type 4) payloads.
+    ApplicationCommand(ApplicationCommandData),
+    /// `MESSAGE_COMPONENT` (type 3) payloads — buttons, selects, etc.
+    MessageComponent(MessageComponentData),
+    /// `MODAL_SUBMIT` (type 5) payloads.
+    ModalSubmit(ModalSubmitData),
+}
+
+/// Application-command interaction data (slash commands, user/message
+/// commands, autocomplete).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplicationCommandData {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub command_type: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<ResolvedData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guild_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
+}
+
+/// Message-component interaction data (buttons, select menus).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageComponentData {
+    pub custom_id: String,
+    pub component_type: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub values: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<ResolvedData>,
+}
+
+/// Modal-submit interaction data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModalSubmitData {
+    pub custom_id: String,
+    pub components: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<ResolvedData>,
+}
+
+/// Resolved entities referenced by snowflake IDs in interaction options /
+/// component values. Discord pre-fetches these so handlers don't need extra
+/// REST calls. Members / roles / channels / attachments are kept as raw
+/// JSON for now — promote them as proper types when callers need it.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ResolvedData {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub users: Option<std::collections::HashMap<String, User>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub members: Option<std::collections::HashMap<String, Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roles: Option<std::collections::HashMap<String, Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channels: Option<std::collections::HashMap<String, Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messages: Option<std::collections::HashMap<String, Message>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<std::collections::HashMap<String, Value>>,
 }
 
 /// MESSAGE_REACTION_REMOVE_ALL event data — all reactions removed from a
@@ -798,6 +904,406 @@ pub struct GuildIntegrationsUpdateEvent {
     pub guild_id: String,
 }
 
+/// CALL_CREATE event data — a private/group DM call started.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CallCreateEvent {
+    pub channel_id: String,
+    pub message_id: String,
+    pub region: String,
+    #[serde(default)]
+    pub ringing: Vec<String>,
+    #[serde(default)]
+    pub embedded_activities: Vec<Value>,
+    #[serde(default)]
+    pub voice_states: Vec<Value>,
+}
+
+/// CALL_UPDATE event data — call state changed (region/ringing list).
+#[derive(Debug, Clone, Deserialize)]
+pub struct CallUpdateEvent {
+    pub channel_id: String,
+    pub message_id: String,
+    pub region: String,
+    #[serde(default)]
+    pub ringing: Vec<String>,
+    #[serde(default)]
+    pub guild_id: Option<String>,
+}
+
+/// CALL_DELETE event data — call ended.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CallDeleteEvent {
+    pub channel_id: String,
+}
+
+/// MESSAGE_ACK event — emitted when the user reads (acknowledges) a message,
+/// either manually or implicitly. Drives unread/mention counters.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MessageAckEvent {
+    pub channel_id: String,
+    pub message_id: String,
+    pub version: u64,
+    #[serde(default)]
+    pub manual: Option<bool>,
+    #[serde(default)]
+    pub mention_count: Option<u32>,
+    #[serde(default)]
+    pub last_viewed: Option<u32>,
+    #[serde(default)]
+    pub flags: Option<u32>,
+    #[serde(default)]
+    pub ack_type: Option<u32>,
+}
+
+/// CHANNEL_RECIPIENT_ADD / CHANNEL_RECIPIENT_REMOVE event — a user joined or
+/// left a group DM. Same payload shape for both directions.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChannelRecipientEvent {
+    pub channel_id: String,
+    pub user: crate::types::user::User,
+}
+
+/// NOTIFICATION_CENTER_ITEM_CREATE event — a new entry was added to the
+/// in-app Notification Center.
+#[derive(Debug, Clone, Deserialize)]
+pub struct NotificationCenterItemCreateEvent {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub item_type: String,
+    pub body: String,
+    pub deeplink: String,
+    #[serde(default)]
+    pub icon_url: Option<String>,
+    #[serde(default)]
+    pub icon_name: Option<String>,
+    #[serde(default)]
+    pub completed: bool,
+    #[serde(default)]
+    pub acked: bool,
+    #[serde(default)]
+    pub disable_action: bool,
+    #[serde(default)]
+    pub is_voice_message: bool,
+    #[serde(default)]
+    pub bundle_id: Option<String>,
+    #[serde(default)]
+    pub other_user: Option<Value>,
+    #[serde(default)]
+    pub application: Option<Value>,
+    #[serde(default)]
+    pub callout: Option<Value>,
+    #[serde(default)]
+    pub item_enum: Option<Value>,
+    #[serde(default)]
+    pub message: Option<Value>,
+    #[serde(default)]
+    pub message_id: Option<String>,
+    #[serde(default)]
+    pub message_channel_id: Option<String>,
+    #[serde(default)]
+    pub message_content: Option<String>,
+    #[serde(default)]
+    pub message_embed_count: Option<u32>,
+    #[serde(default)]
+    pub message_attachment_count: Option<u32>,
+    #[serde(default)]
+    pub message_sticker_count: Option<u32>,
+    #[serde(default)]
+    pub guild_id: Option<String>,
+    #[serde(default)]
+    pub guild_scheduled_event_id: Option<String>,
+}
+
+/// REACTION_NOTIFICATION_SENT event — push-notification audit for a reaction.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReactionNotificationSentEvent {
+    pub route: String,
+    pub reactor_user_id: String,
+    pub message: Value,
+    pub emoji: Value,
+}
+
+/// GENERIC_PUSH_NOTIFICATION_SENT event — generic push-notification audit.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GenericPushNotificationSentEvent {
+    #[serde(rename = "type")]
+    pub notif_kind: String,
+    pub tracking_type: String,
+    pub notification_type: String,
+    pub title: String,
+    pub body: String,
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    pub route: String,
+    pub deeplink: String,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub channel_id: Option<String>,
+    #[serde(default)]
+    pub channel_type: Option<u8>,
+    #[serde(default)]
+    pub guild_id: Option<String>,
+    #[serde(default)]
+    pub message_id: Option<String>,
+    #[serde(default)]
+    pub message_type: Option<u8>,
+    #[serde(default)]
+    pub notif_type_id: Option<String>,
+    pub user_id: String,
+    pub user_username: String,
+    #[serde(default)]
+    pub user_discriminator: Option<u16>,
+    #[serde(default)]
+    pub user_avatar: Option<String>,
+}
+
+/// USER_APPLICATION_IDENTITY_UPDATE event — user-installed app identity
+/// (per-app username/avatar override) was edited.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserApplicationIdentityUpdateEvent {
+    pub application_id: String,
+    pub user_id: String,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub avatar_hash: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<Value>,
+}
+
+/// USER_REQUIRED_ACTION_UPDATE event — current user must take an action
+/// (e.g. verify email). `required_action` may be null to clear.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserRequiredActionUpdateEvent {
+    #[serde(default)]
+    pub required_action: Option<String>,
+}
+
+/// DM_SETTINGS_UPSELL_SHOW event — Nitro / DM upsell prompt signal.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DmSettingsUpsellShowEvent {
+    pub guild_id: String,
+    #[serde(flatten)]
+    pub extra: Value,
+}
+
+/// GUILD_APPLICATION_COMMAND_INDEX_UPDATE event — slash-command index
+/// refresh signal for a guild.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GuildApplicationCommandIndexUpdateEvent {
+    pub guild_id: String,
+    #[serde(default)]
+    pub version: i64,
+    #[serde(default)]
+    pub bot_users: Vec<String>,
+    #[serde(default)]
+    pub application_command_counts: std::collections::HashMap<String, i64>,
+    #[serde(flatten)]
+    pub extra: Value,
+}
+
+/// GUILD_APPLIED_BOOSTS_UPDATE event — server boost application changed.
+/// Payload is a single applied-boost record.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GuildAppliedBoostsUpdateEvent {
+    pub id: String,
+    pub guild_id: String,
+    pub user_id: String,
+    #[serde(default)]
+    pub ends_at: Option<String>,
+    #[serde(default)]
+    pub pause_ends_at: Option<String>,
+    #[serde(default)]
+    pub ended: bool,
+    #[serde(flatten)]
+    pub extra: Value,
+}
+
+/// SESSIONS_REPLACE event data — replaces the full list of sessions for the
+/// current user across all connected clients (other devices/browsers signed
+/// into the same account). Dispatched whenever that set changes.
+///
+/// The gateway sends `d` as a bare JSON array; this newtype wraps it so it
+/// can be deserialized as a typed event payload.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(transparent)]
+pub struct SessionsReplaceEvent {
+    /// Full replacement list of active sessions for the current user.
+    pub sessions: Vec<crate::types::Session>,
+}
+
+/// CONTENT_INVENTORY_INBOX_STALE event data — signals the user's
+/// content-inventory inbox cache is stale and should be refetched via REST.
+/// Payload is intentionally minimal; Discord may send it empty or with a
+/// `last_viewed` marker (days since Unix epoch).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ContentInventoryInboxStaleEvent {
+    #[serde(default)]
+    pub last_viewed: Option<i64>,
+}
+
+/// READY_SUPPLEMENTAL event data — sent immediately after READY with bulk
+/// state. Sub-shapes are large and evolve frequently, so inner fields are
+/// kept as raw `Value`.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ReadySupplementalEvent {
+    /// Merged presence data: typically `{ friends: [...], guilds: [[...], ...] }`.
+    #[serde(default)]
+    pub merged_presences: Option<Value>,
+    /// Merged member arrays — one inner array per guild (parallel to `guilds`).
+    #[serde(default)]
+    pub merged_members: Vec<Value>,
+    /// Per-guild supplemental data (voice_states, embedded_activities, threads, ...).
+    #[serde(default)]
+    pub guilds: Vec<Value>,
+    /// Disclosed feature flags / opt-in disclosures.
+    #[serde(default)]
+    pub disclose: Vec<Value>,
+    /// Lazy-loaded private channel hints.
+    #[serde(default)]
+    pub lazy_private_channels: Vec<Value>,
+    /// Optional outstanding game invites.
+    #[serde(default)]
+    pub game_invites: Option<Value>,
+    /// Optional top-level voice state list.
+    #[serde(default)]
+    pub voice_states: Option<Value>,
+    /// Forward-compatible catchall.
+    #[serde(flatten)]
+    pub extra: Value,
+}
+
+/// USER_SETTINGS_PROTO_UPDATE event data — sent when the user's settings
+/// proto is updated. The `proto` payload is a base64-encoded protobuf whose
+/// schema depends on `settings.type`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserSettingsProtoUpdateEvent {
+    pub settings: UserSettingsProtoData,
+    #[serde(default)]
+    pub partial: bool,
+}
+
+/// Inner `settings` object for [`UserSettingsProtoUpdateEvent`].
+///
+/// `settings_type`: 1 = PreloadedUserSettings, 2 = FrecencyAndFavoritesSettings,
+/// 3 = TestSettings.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserSettingsProtoData {
+    #[serde(rename = "type")]
+    pub settings_type: u8,
+    /// Base64-encoded protobuf bytes.
+    pub proto: String,
+}
+
+/// CONVERSATION_SUMMARY_UPDATE event data — Discord's auto-generated
+/// conversation summaries for active text channels were updated.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConversationSummaryUpdateEvent {
+    pub channel_id: String,
+    #[serde(default)]
+    pub guild_id: Option<String>,
+    #[serde(default)]
+    pub summaries: Vec<ConversationSummary>,
+}
+
+/// One conversation summary inside [`ConversationSummaryUpdateEvent`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConversationSummary {
+    pub id: String,
+    #[serde(default)]
+    pub topic: Option<String>,
+    #[serde(default)]
+    pub summ_short: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub message_ids: Vec<String>,
+    #[serde(default)]
+    pub people: Vec<String>,
+    #[serde(rename = "unsafe", default)]
+    pub unsafe_: Option<bool>,
+    #[serde(default)]
+    pub start_id: Option<String>,
+    #[serde(default)]
+    pub end_id: Option<String>,
+    #[serde(default)]
+    pub count: Option<u32>,
+    #[serde(rename = "type", default)]
+    pub summary_type: Option<u8>,
+    #[serde(default)]
+    pub source: Option<u8>,
+}
+
+/// EMBEDDED_ACTIVITY_UPDATE_V2 event data — published when an embedded
+/// (voice-channel) activity instance changes state. Inner `state` is left
+/// as raw JSON because the schema is large and evolves frequently.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EmbeddedActivityUpdateV2Event {
+    pub guild_id: String,
+    pub channel_id: String,
+    #[serde(default)]
+    pub users: Vec<String>,
+    pub embedded_activity: EmbeddedActivity,
+}
+
+/// Inner `embedded_activity` payload of [`EmbeddedActivityUpdateV2Event`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct EmbeddedActivity {
+    pub application_id: String,
+    pub instance_id: String,
+    #[serde(default)]
+    pub launch_id: Option<String>,
+    #[serde(default)]
+    pub user_ids: Vec<String>,
+    /// Opaque/evolving inner state (users with current_room_id, rooms,
+    /// premium_tier_requirement, etc.).
+    #[serde(default)]
+    pub state: Value,
+}
+
+/// CHANNEL_INFO event data — sent in response to opcode 43 (Request Channel
+/// Info). Carries ephemeral per-channel data (voice status, voice start time)
+/// for channels in a guild.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChannelInfoEvent {
+    pub guild_id: String,
+    #[serde(default)]
+    pub channels: Vec<ChannelInfoChannel>,
+}
+
+/// One channel's ephemeral data inside [`ChannelInfoEvent`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChannelInfoChannel {
+    pub id: String,
+    /// Voice channel status string (nullable, optional).
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Unix timestamp (in seconds) of when the voice session started
+    /// (nullable, optional).
+    #[serde(default)]
+    pub voice_start_time: Option<i64>,
+}
+
+/// VOICE_CHANNEL_STATUS_UPDATE event — voice channel status string changed.
+#[derive(Debug, Clone, Deserialize)]
+pub struct VoiceChannelStatusUpdateEvent {
+    pub id: String,
+    pub guild_id: String,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+/// VOICE_CHANNEL_START_TIME_UPDATE event — voice session start timestamp
+/// changed for a voice channel.
+#[derive(Debug, Clone, Deserialize)]
+pub struct VoiceChannelStartTimeUpdateEvent {
+    pub id: String,
+    pub guild_id: String,
+    #[serde(default)]
+    pub voice_start_time: Option<i64>,
+}
+
 /// SUBSCRIPTION_CREATE / UPDATE / DELETE event data
 ///
 /// First-pass: full subscription schema kept in `extra` for drill-down.
@@ -978,6 +1484,54 @@ pub enum TypedEvent {
     SubscriptionUpdate(SubscriptionEvent),
     /// Subscription deleted
     SubscriptionDelete(SubscriptionEvent),
+    /// Channel info — response to opcode 43 (Request Channel Info)
+    ChannelInfo(ChannelInfoEvent),
+    /// Voice channel status string changed
+    VoiceChannelStatusUpdate(VoiceChannelStatusUpdateEvent),
+    /// Voice channel start time changed
+    VoiceChannelStartTimeUpdate(VoiceChannelStartTimeUpdateEvent),
+    /// Full replacement list of the current user's active sessions
+    SessionsReplace(SessionsReplaceEvent),
+    /// Content-inventory inbox cache was invalidated
+    ContentInventoryInboxStale(ContentInventoryInboxStaleEvent),
+    /// Bulk lazy state delivered immediately after READY
+    ReadySupplemental(Box<ReadySupplementalEvent>),
+    /// User's protobuf-encoded settings were updated
+    UserSettingsProtoUpdate(UserSettingsProtoUpdateEvent),
+    /// Auto-generated conversation summaries were updated for a channel
+    ConversationSummaryUpdate(ConversationSummaryUpdateEvent),
+    /// Embedded voice-channel activity instance state changed (v2 schema)
+    EmbeddedActivityUpdateV2(EmbeddedActivityUpdateV2Event),
+    /// DM voice/video call started
+    CallCreate(CallCreateEvent),
+    /// DM voice/video call state changed
+    CallUpdate(CallUpdateEvent),
+    /// DM voice/video call ended
+    CallDelete(CallDeleteEvent),
+    /// User read (acknowledged) a message
+    MessageAck(MessageAckEvent),
+    /// User joined a group DM
+    ChannelRecipientAdd(ChannelRecipientEvent),
+    /// User left a group DM
+    ChannelRecipientRemove(ChannelRecipientEvent),
+    /// New entry added to the in-app Notification Center
+    NotificationCenterItemCreate(Box<NotificationCenterItemCreateEvent>),
+    /// Push notification dispatched for a reaction
+    ReactionNotificationSent(ReactionNotificationSentEvent),
+    /// Generic push notification audit
+    GenericPushNotificationSent(GenericPushNotificationSentEvent),
+    /// Friend / block edge state changed (reuses RelationshipAddEvent shape)
+    RelationshipUpdate(RelationshipAddEvent),
+    /// User-installed app identity (per-app username/avatar) was edited
+    UserApplicationIdentityUpdate(UserApplicationIdentityUpdateEvent),
+    /// Account requires action (reverify / etc.)
+    UserRequiredActionUpdate(UserRequiredActionUpdateEvent),
+    /// Nitro / DM upsell prompt
+    DmSettingsUpsellShow(DmSettingsUpsellShowEvent),
+    /// Slash-command index refresh signal for a guild
+    GuildApplicationCommandIndexUpdate(GuildApplicationCommandIndexUpdateEvent),
+    /// Server boost application changed
+    GuildAppliedBoostsUpdate(GuildAppliedBoostsUpdateEvent),
     /// Unknown/unhandled event with raw data
     Unknown { event_type: String, data: Value },
 }
@@ -1068,6 +1622,30 @@ impl TypedEvent {
             "GUILD_EMOJIS_UPDATE" => parse!(GuildEmojisUpdate),
             "GUILD_STICKERS_UPDATE" => parse!(GuildStickersUpdate),
             "GUILD_INTEGRATIONS_UPDATE" => parse!(GuildIntegrationsUpdate),
+            "CHANNEL_INFO" => parse!(ChannelInfo),
+            "VOICE_CHANNEL_STATUS_UPDATE" => parse!(VoiceChannelStatusUpdate),
+            "VOICE_CHANNEL_START_TIME_UPDATE" => parse!(VoiceChannelStartTimeUpdate),
+            "SESSIONS_REPLACE" => parse!(SessionsReplace),
+            "CONTENT_INVENTORY_INBOX_STALE" => parse!(ContentInventoryInboxStale),
+            "READY_SUPPLEMENTAL" => serde_json::from_value(data.clone()).map(|e| TypedEvent::ReadySupplemental(Box::new(e))).unwrap_or_else(|_| TypedEvent::Unknown { event_type: event_type.to_string(), data }),
+            "USER_SETTINGS_PROTO_UPDATE" => parse!(UserSettingsProtoUpdate),
+            "CONVERSATION_SUMMARY_UPDATE" => parse!(ConversationSummaryUpdate),
+            "EMBEDDED_ACTIVITY_UPDATE_V2" => parse!(EmbeddedActivityUpdateV2),
+            "CALL_CREATE" => parse!(CallCreate),
+            "CALL_UPDATE" => parse!(CallUpdate),
+            "CALL_DELETE" => parse!(CallDelete),
+            "MESSAGE_ACK" => parse!(MessageAck),
+            "CHANNEL_RECIPIENT_ADD" => parse!(ChannelRecipientAdd),
+            "CHANNEL_RECIPIENT_REMOVE" => parse!(ChannelRecipientRemove),
+            "NOTIFICATION_CENTER_ITEM_CREATE" => serde_json::from_value(data.clone()).map(|e| TypedEvent::NotificationCenterItemCreate(Box::new(e))).unwrap_or_else(|_| TypedEvent::Unknown { event_type: event_type.to_string(), data }),
+            "REACTION_NOTIFICATION_SENT" => parse!(ReactionNotificationSent),
+            "GENERIC_PUSH_NOTIFICATION_SENT" => parse!(GenericPushNotificationSent),
+            "RELATIONSHIP_UPDATE" => parse!(RelationshipUpdate),
+            "USER_APPLICATION_IDENTITY_UPDATE" => parse!(UserApplicationIdentityUpdate),
+            "USER_REQUIRED_ACTION_UPDATE" => parse!(UserRequiredActionUpdate),
+            "DM_SETTINGS_UPSELL_SHOW" => parse!(DmSettingsUpsellShow),
+            "GUILD_APPLICATION_COMMAND_INDEX_UPDATE" => parse!(GuildApplicationCommandIndexUpdate),
+            "GUILD_APPLIED_BOOSTS_UPDATE" => parse!(GuildAppliedBoostsUpdate),
             "SUBSCRIPTION_CREATE" => parse!(SubscriptionCreate),
             "SUBSCRIPTION_UPDATE" => parse!(SubscriptionUpdate),
             "SUBSCRIPTION_DELETE" => parse!(SubscriptionDelete),
@@ -1158,6 +1736,30 @@ impl TypedEvent {
             TypedEvent::SubscriptionCreate(_) => "SUBSCRIPTION_CREATE",
             TypedEvent::SubscriptionUpdate(_) => "SUBSCRIPTION_UPDATE",
             TypedEvent::SubscriptionDelete(_) => "SUBSCRIPTION_DELETE",
+            TypedEvent::ChannelInfo(_) => "CHANNEL_INFO",
+            TypedEvent::VoiceChannelStatusUpdate(_) => "VOICE_CHANNEL_STATUS_UPDATE",
+            TypedEvent::VoiceChannelStartTimeUpdate(_) => "VOICE_CHANNEL_START_TIME_UPDATE",
+            TypedEvent::SessionsReplace(_) => "SESSIONS_REPLACE",
+            TypedEvent::ContentInventoryInboxStale(_) => "CONTENT_INVENTORY_INBOX_STALE",
+            TypedEvent::ReadySupplemental(_) => "READY_SUPPLEMENTAL",
+            TypedEvent::UserSettingsProtoUpdate(_) => "USER_SETTINGS_PROTO_UPDATE",
+            TypedEvent::ConversationSummaryUpdate(_) => "CONVERSATION_SUMMARY_UPDATE",
+            TypedEvent::EmbeddedActivityUpdateV2(_) => "EMBEDDED_ACTIVITY_UPDATE_V2",
+            TypedEvent::CallCreate(_) => "CALL_CREATE",
+            TypedEvent::CallUpdate(_) => "CALL_UPDATE",
+            TypedEvent::CallDelete(_) => "CALL_DELETE",
+            TypedEvent::MessageAck(_) => "MESSAGE_ACK",
+            TypedEvent::ChannelRecipientAdd(_) => "CHANNEL_RECIPIENT_ADD",
+            TypedEvent::ChannelRecipientRemove(_) => "CHANNEL_RECIPIENT_REMOVE",
+            TypedEvent::NotificationCenterItemCreate(_) => "NOTIFICATION_CENTER_ITEM_CREATE",
+            TypedEvent::ReactionNotificationSent(_) => "REACTION_NOTIFICATION_SENT",
+            TypedEvent::GenericPushNotificationSent(_) => "GENERIC_PUSH_NOTIFICATION_SENT",
+            TypedEvent::RelationshipUpdate(_) => "RELATIONSHIP_UPDATE",
+            TypedEvent::UserApplicationIdentityUpdate(_) => "USER_APPLICATION_IDENTITY_UPDATE",
+            TypedEvent::UserRequiredActionUpdate(_) => "USER_REQUIRED_ACTION_UPDATE",
+            TypedEvent::DmSettingsUpsellShow(_) => "DM_SETTINGS_UPSELL_SHOW",
+            TypedEvent::GuildApplicationCommandIndexUpdate(_) => "GUILD_APPLICATION_COMMAND_INDEX_UPDATE",
+            TypedEvent::GuildAppliedBoostsUpdate(_) => "GUILD_APPLIED_BOOSTS_UPDATE",
             TypedEvent::Unknown { event_type, .. } => event_type,
         }
     }

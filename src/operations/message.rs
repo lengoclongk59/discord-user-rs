@@ -220,6 +220,27 @@ pub trait MessageOps: DiscordContext {
         self.http().get(crate::route::Route::GetPins { channel_id: channel_id.get() }).await
     }
 
+    /// List pinned messages with cursor pagination (v2 endpoint).
+    ///
+    /// `GET /channels/{channel.id}/messages/pins?before={iso8601}&after={iso8601}&limit={n}`
+    ///
+    /// Returns up to `limit` (default 50, max 50) [`MessagePin`] entries plus
+    /// a `has_more` flag. Use `before` (an ISO8601 timestamp) to paginate.
+    async fn get_message_pins(
+        &self,
+        channel_id: u64,
+        before: Option<&str>,
+        after: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<crate::types::message::MessagePinsResponse> {
+        self.http().get(crate::route::Route::ChannelPinsV2 {
+            channel_id,
+            before: before.map(|s| std::borrow::Cow::Owned(s.to_string())),
+            after: after.map(|s| std::borrow::Cow::Owned(s.to_string())),
+            limit,
+        }).await
+    }
+
     /// Crosspost (publish) a message to all channels following this
     /// announcement channel.
     ///

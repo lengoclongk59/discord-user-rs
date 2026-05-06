@@ -365,6 +365,7 @@ bitflags::bitflags! {
         const SEND_POLLS = 1 << 49;
         const USE_EXTERNAL_APPS = 1 << 50;
         const PIN_MESSAGES = 1 << 51;
+        const BYPASS_SLOWMODE = 1 << 52;
     }
 }
 
@@ -499,4 +500,119 @@ macro_rules! impl_serde_as_u64 {
     };
 }
 
-impl_serde_as_u64!(MessageFlags, UserPublicFlags, Permissions);
+impl_serde_as_u64!(MessageFlags, UserPublicFlags, Permissions, AttachmentFlags);
+
+/// Auto-moderation rule trigger type.
+///
+/// Note: variant `2` is intentionally absent in Discord's API specification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr, Deserialize_repr)]
+#[repr(u8)]
+pub enum AutoModerationTriggerType {
+    Keyword = 1,
+    Spam = 3,
+    KeywordPreset = 4,
+    MentionSpam = 5,
+    MemberProfile = 6,
+}
+
+/// Auto-moderation action type executed when a rule triggers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr, Deserialize_repr)]
+#[repr(u8)]
+pub enum AutoModerationActionType {
+    BlockMessage = 1,
+    SendAlertMessage = 2,
+    Timeout = 3,
+    BlockMemberInteraction = 4,
+}
+
+/// Built-in keyword preset categories used by auto-moderation rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr, Deserialize_repr)]
+#[repr(u8)]
+pub enum AutoModerationKeywordPresetType {
+    Profanity = 1,
+    SexualContent = 2,
+    Slurs = 3,
+}
+
+/// Indicates which event type triggers an auto-moderation rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr, Deserialize_repr)]
+#[repr(u8)]
+pub enum AutoModerationEventType {
+    MessageSend = 1,
+    MemberUpdate = 2,
+}
+
+bitflags::bitflags! {
+    /// Attachment flags (bitfield on the Attachment object)
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    pub struct AttachmentFlags: u64 {
+        /// Attachment is a clip
+        const IS_CLIP = 1 << 0;
+        /// Attachment is a thumbnail
+        const IS_THUMBNAIL = 1 << 1;
+        /// Attachment is a remix
+        const IS_REMIX = 1 << 2;
+        /// Attachment is marked as a spoiler
+        const IS_SPOILER = 1 << 3;
+        /// Attachment contains explicit media
+        const CONTAINS_EXPLICIT_MEDIA = 1 << 4;
+        /// Attachment is animated
+        const IS_ANIMATED = 1 << 5;
+    }
+}
+
+/// Third-party connection service for the user's connections list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConnectionService {
+    #[serde(rename = "amazon-music")]
+    AmazonMusic,
+    #[serde(rename = "battlenet")]
+    Battlenet,
+    Bungie,
+    Bluesky,
+    Crunchyroll,
+    Domain,
+    Ebay,
+    #[serde(rename = "epicgames")]
+    EpicGames,
+    Facebook,
+    Github,
+    Instagram,
+    #[serde(rename = "leagueoflegends")]
+    LeagueOfLegends,
+    Mastodon,
+    Paypal,
+    Playstation,
+    Reddit,
+    Riotgames,
+    Roblox,
+    Spotify,
+    Skype,
+    Steam,
+    Tiktok,
+    Twitch,
+    Twitter,
+    Xbox,
+    Youtube,
+    /// Fallback variant for any unrecognised service value.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Context in which an interaction was invoked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr, Deserialize_repr)]
+#[repr(u8)]
+pub enum InteractionContextType {
+    Guild = 0,
+    BotDm = 1,
+    PrivateChannel = 2,
+}
+
+/// Owner type for `interaction.authorizing_integration_owners` keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr, Deserialize_repr)]
+#[repr(u8)]
+pub enum IntegrationOwnerType {
+    GuildInstall = 0,
+    UserInstall = 1,
+}

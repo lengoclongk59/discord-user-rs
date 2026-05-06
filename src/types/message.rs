@@ -91,7 +91,7 @@ pub struct Message {
     pub call: Option<MessageCall>,
     /// Forwarded message snapshots (immutable copies of the source).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message_snapshots: Option<Vec<serde_json::Value>>,
+    pub message_snapshots: Option<Vec<MessageSnapshot>>,
 }
 
 impl Message {
@@ -121,6 +121,7 @@ impl Message {
     /// Returns `None` if the channel ID cannot be parsed.
     pub fn as_reference(&self) -> MessageReference {
         MessageReference {
+            reference_type: None,
             message_id: Some(self.id.clone()),
             channel_id: Some(self.channel_id.clone()),
             guild_id: self.guild_id.clone(),
@@ -340,6 +341,13 @@ pub struct Attachment {
     pub flags: Option<u64>,
 }
 
+impl Attachment {
+    /// Decode the raw `flags` bitfield into typed [`AttachmentFlags`], if present.
+    pub fn flag_bits(&self) -> Option<crate::types::enums::AttachmentFlags> {
+        self.flags.and_then(|raw| crate::types::enums::AttachmentFlags::from_bits(raw))
+    }
+}
+
 /// Message embed
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Embed {
@@ -369,6 +377,9 @@ pub struct Embed {
     pub author: Option<EmbedAuthor>,
     #[serde(default)]
     pub fields: Vec<EmbedField>,
+    /// Embed flags bitfield (1<<5 = IS_CONTENT_INVENTORY_ENTRY).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flags: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -427,6 +438,24 @@ pub struct Reaction {
     #[serde(default)]
     pub me: bool,
     pub emoji: Emoji,
+    /// Breakdown of normal vs super (burst) reaction counts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count_details: Option<ReactionCountDetails>,
+    /// Whether the current user super-reacted using this emoji.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub me_burst: Option<bool>,
+    /// Hex color codes used for super-reaction burst animation (e.g. "#FF0000").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub burst_colors: Option<Vec<String>>,
+}
+
+/// Breakdown of reaction counts split between normal and super (burst) reactions.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ReactionCountDetails {
+    /// Number of super (burst) reactions.
+    pub burst: u64,
+    /// Number of normal reactions.
+    pub normal: u64,
 }
 
 /// Discord emoji
@@ -443,6 +472,9 @@ pub struct Emoji {
 /// Message reference for replies
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageReference {
+    /// Reference type: 0 = DEFAULT (reply), 1 = FORWARD.
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub reference_type: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -477,4 +509,59 @@ pub struct EditMessageRequest<'a> {
     pub content: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flags: Option<u64>,
+}
+
+/// A single pinned message entry from `GET /channels/{id}/messages/pins`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessagePin {
+    /// ISO 8601 timestamp recording when this message was pinned.
+    pub pinned_at: String,
+    /// The pinned message itself.
+    pub message: Message,
+}
+
+/// Paginated response wrapper for `GET /channels/{id}/messages/pins`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessagePinsResponse {
+    /// Pin entries for the current page, newest pin first.
+    pub items: Vec<MessagePin>,
+    /// Whether additional pages of pinned messages remain.
+    pub has_more: bool,
+}
+
+/// Forwarded-message snapshot (immutable copy of the source message).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageSnapshot {
+    /// The snapshotted (frozen) message contents.
+    pub message: MessageSnapshotInner,
+}
+
+/// Inner payload of a [`MessageSnapshot`] — a subset of the [`Message`] fields
+/// that Discord captures at forward time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageSnapshotInner {
+    /// Numeric Discord message type at the moment of the snapshot.
+    #[serde(rename = "type")]
+    pub message_type: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embeds: Option<Vec<Embed>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<Attachment>>,
+    pub timestamp: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_timestamp: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flags: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mentions: Option<Vec<crate::types::user::User>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mention_roles: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stickers: Option<Vec<serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sticker_items: Option<Vec<StickerItem>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub components: Option<Vec<serde_json::Value>>,
 }

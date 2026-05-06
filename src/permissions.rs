@@ -136,6 +136,7 @@ mod tests {
             mentionable: false,
             flags: 0,
             tags: None,
+            colors: None,
         }
     }
 

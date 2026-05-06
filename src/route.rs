@@ -422,6 +422,61 @@ pub enum Route<'a> {
     /// Batch edit application command permissions: PUT
     /// /applications/{app_id}/guilds/{gid}/commands/permissions
     BatchEditApplicationCommandPermissions { application_id: u64, guild_id: u64 },
+
+    // Application / Monetization / Lobbies / Voice / Pins V2 / Stage Instances / Incident Actions / Bulk Channel Positions
+    /// Get current application: GET /applications/@me
+    CurrentApplication,
+    /// Get an application activity instance: GET /applications/{app_id}/activity-instances/{instance_id}
+    ApplicationActivityInstance { application_id: u64, instance_id: Cow<'a, str> },
+    /// List application SKUs: GET /applications/{app_id}/skus
+    ApplicationSkus { application_id: u64 },
+    /// List application entitlements (paginated, filterable):
+    /// GET /applications/{app_id}/entitlements
+    ApplicationEntitlements { application_id: u64, user_id: Option<u64>, sku_ids: Option<Cow<'a, str>>, before: Option<u64>, after: Option<u64>, limit: Option<u32>, guild_id: Option<u64>, exclude_ended: Option<bool>, exclude_deleted: Option<bool> },
+    /// Get / Create / Delete a single entitlement:
+    /// /applications/{app_id}/entitlements/{entitlement_id}
+    ApplicationEntitlement { application_id: u64, entitlement_id: u64 },
+    /// Consume an entitlement: POST
+    /// /applications/{app_id}/entitlements/{entitlement_id}/consume
+    ConsumeEntitlement { application_id: u64, entitlement_id: u64 },
+    /// List SKU subscriptions: GET /skus/{sku_id}/subscriptions
+    SkuSubscriptions { sku_id: u64, before: Option<u64>, after: Option<u64>, limit: Option<u32>, user_id: Option<u64> },
+    /// Get a single SKU subscription: GET
+    /// /skus/{sku_id}/subscriptions/{subscription_id}
+    SkuSubscription { sku_id: u64, subscription_id: u64 },
+    /// Get/Update application role connection metadata records:
+    /// /applications/{app_id}/role-connections/metadata
+    ApplicationRoleConnectionMetadata { application_id: u64 },
+    /// Create / list lobbies: /lobbies
+    Lobbies,
+    /// Get / Modify / Delete a lobby: /lobbies/{lobby_id}
+    Lobby { lobby_id: u64 },
+    /// List / add lobby members: /lobbies/{lobby_id}/members
+    LobbyMembers { lobby_id: u64 },
+    /// Add / Remove a lobby member: /lobbies/{lobby_id}/members/{user_id}
+    LobbyMember { lobby_id: u64, user_id: u64 },
+    /// Leave a lobby (current user): DELETE
+    /// /lobbies/{lobby_id}/members/@me
+    LeaveLobby { lobby_id: u64 },
+    /// Link / Unlink lobby channel: /lobbies/{lobby_id}/channel-linking
+    LobbyChannelLink { lobby_id: u64 },
+    /// Get current user's voice state in a guild: GET
+    /// /guilds/{guild_id}/voice-states/@me
+    GetCurrentUserVoiceState { guild_id: u64 },
+    /// Get another user's voice state in a guild: GET
+    /// /guilds/{guild_id}/voice-states/{user_id}
+    GetUserVoiceState { guild_id: u64, user_id: u64 },
+    /// Channel pins (V2 paginated): GET
+    /// /channels/{channel_id}/messages/pins
+    ChannelPinsV2 { channel_id: u64, before: Option<Cow<'a, str>>, after: Option<Cow<'a, str>>, limit: Option<u32> },
+    /// List guild stage instances: GET /guilds/{guild_id}/stage-instances
+    GuildStageInstances { guild_id: u64 },
+    /// Modify guild incident actions: PUT
+    /// /guilds/{guild_id}/incident-actions
+    GuildIncidentActions { guild_id: u64 },
+    /// Bulk modify guild channel positions: PATCH
+    /// /guilds/{guild_id}/channels
+    BulkChannelPositions { guild_id: u64 },
 }
 
 impl<'a> Route<'a> {
@@ -798,6 +853,98 @@ impl<'a> Route<'a> {
                 }
             }
             Route::BatchEditApplicationCommandPermissions { application_id, guild_id } => Cow::Owned(format!("applications/{}/guilds/{}/commands/permissions", application_id, guild_id)),
+
+            // Application / Monetization / Lobbies / Voice / Pins V2 / Stage Instances / Incident Actions / Bulk Channel Positions
+            Route::CurrentApplication => Cow::Borrowed("applications/@me"),
+            Route::ApplicationActivityInstance { application_id, instance_id } => Cow::Owned(format!("applications/{}/activity-instances/{}", application_id, urlencoding::encode(instance_id))),
+            Route::ApplicationSkus { application_id } => Cow::Owned(format!("applications/{}/skus", application_id)),
+            Route::ApplicationEntitlements { application_id, user_id, sku_ids, before, after, limit, guild_id, exclude_ended, exclude_deleted } => {
+                let mut url = format!("applications/{}/entitlements", application_id);
+                let mut params: Vec<String> = Vec::new();
+                if let Some(u) = user_id {
+                    params.push(format!("user_id={}", u));
+                }
+                if let Some(s) = sku_ids {
+                    params.push(format!("sku_ids={}", urlencoding::encode(s)));
+                }
+                if let Some(b) = before {
+                    params.push(format!("before={}", b));
+                }
+                if let Some(a) = after {
+                    params.push(format!("after={}", a));
+                }
+                if let Some(l) = limit {
+                    params.push(format!("limit={}", l));
+                }
+                if let Some(g) = guild_id {
+                    params.push(format!("guild_id={}", g));
+                }
+                if let Some(e) = exclude_ended {
+                    params.push(format!("exclude_ended={}", e));
+                }
+                if let Some(e) = exclude_deleted {
+                    params.push(format!("exclude_deleted={}", e));
+                }
+                if !params.is_empty() {
+                    url.push('?');
+                    url.push_str(&params.join("&"));
+                }
+                Cow::Owned(url)
+            }
+            Route::ApplicationEntitlement { application_id, entitlement_id } => Cow::Owned(format!("applications/{}/entitlements/{}", application_id, entitlement_id)),
+            Route::ConsumeEntitlement { application_id, entitlement_id } => Cow::Owned(format!("applications/{}/entitlements/{}/consume", application_id, entitlement_id)),
+            Route::SkuSubscriptions { sku_id, before, after, limit, user_id } => {
+                let mut url = format!("skus/{}/subscriptions", sku_id);
+                let mut params: Vec<String> = Vec::new();
+                if let Some(b) = before {
+                    params.push(format!("before={}", b));
+                }
+                if let Some(a) = after {
+                    params.push(format!("after={}", a));
+                }
+                if let Some(l) = limit {
+                    params.push(format!("limit={}", l));
+                }
+                if let Some(u) = user_id {
+                    params.push(format!("user_id={}", u));
+                }
+                if !params.is_empty() {
+                    url.push('?');
+                    url.push_str(&params.join("&"));
+                }
+                Cow::Owned(url)
+            }
+            Route::SkuSubscription { sku_id, subscription_id } => Cow::Owned(format!("skus/{}/subscriptions/{}", sku_id, subscription_id)),
+            Route::ApplicationRoleConnectionMetadata { application_id } => Cow::Owned(format!("applications/{}/role-connections/metadata", application_id)),
+            Route::Lobbies => Cow::Borrowed("lobbies"),
+            Route::Lobby { lobby_id } => Cow::Owned(format!("lobbies/{}", lobby_id)),
+            Route::LobbyMembers { lobby_id } => Cow::Owned(format!("lobbies/{}/members", lobby_id)),
+            Route::LobbyMember { lobby_id, user_id } => Cow::Owned(format!("lobbies/{}/members/{}", lobby_id, user_id)),
+            Route::LeaveLobby { lobby_id } => Cow::Owned(format!("lobbies/{}/members/@me", lobby_id)),
+            Route::LobbyChannelLink { lobby_id } => Cow::Owned(format!("lobbies/{}/channel-linking", lobby_id)),
+            Route::GetCurrentUserVoiceState { guild_id } => Cow::Owned(format!("guilds/{}/voice-states/@me", guild_id)),
+            Route::GetUserVoiceState { guild_id, user_id } => Cow::Owned(format!("guilds/{}/voice-states/{}", guild_id, user_id)),
+            Route::ChannelPinsV2 { channel_id, before, after, limit } => {
+                let mut url = format!("channels/{}/messages/pins", channel_id);
+                let mut params: Vec<String> = Vec::new();
+                if let Some(b) = before {
+                    params.push(format!("before={}", urlencoding::encode(b)));
+                }
+                if let Some(a) = after {
+                    params.push(format!("after={}", urlencoding::encode(a)));
+                }
+                if let Some(l) = limit {
+                    params.push(format!("limit={}", l));
+                }
+                if !params.is_empty() {
+                    url.push('?');
+                    url.push_str(&params.join("&"));
+                }
+                Cow::Owned(url)
+            }
+            Route::GuildStageInstances { guild_id } => Cow::Owned(format!("guilds/{}/stage-instances", guild_id)),
+            Route::GuildIncidentActions { guild_id } => Cow::Owned(format!("guilds/{}/incident-actions", guild_id)),
+            Route::BulkChannelPositions { guild_id } => Cow::Owned(format!("guilds/{}/channels", guild_id)),
         }
     }
 }

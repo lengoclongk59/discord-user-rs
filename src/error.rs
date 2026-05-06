@@ -1,4 +1,4 @@
-//! Error types for the discord-control library
+//! Error types for the `discord-user-rs` library
 
 use thiserror::Error;
 

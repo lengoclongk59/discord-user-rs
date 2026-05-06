@@ -25,6 +25,27 @@ pub trait VoiceOps: DiscordContext {
         self.http().get(Route::GetGuildVoiceRegions { guild_id: guild_id.get() }).await
     }
 
+    /// Get the current user's voice state in a guild.
+    ///
+    /// `GET /guilds/{guild.id}/voice-states/@me`
+    async fn get_current_user_voice_state(
+        &self,
+        guild_id: u64,
+    ) -> Result<serde_json::Value> {
+        self.http().get(crate::route::Route::GetCurrentUserVoiceState { guild_id }).await
+    }
+
+    /// Get another user's voice state in a guild.
+    ///
+    /// `GET /guilds/{guild.id}/voice-states/{user.id}`
+    async fn get_user_voice_state(
+        &self,
+        guild_id: u64,
+        user_id: u64,
+    ) -> Result<serde_json::Value> {
+        self.http().get(crate::route::Route::GetUserVoiceState { guild_id, user_id }).await
+    }
+
     /// Edit the current user's voice state in a guild.
     ///
     /// Use this to request to speak in a Stage channel (set

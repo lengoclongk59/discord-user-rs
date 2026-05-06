@@ -34,7 +34,9 @@ const GATEWAY_URL: &str = "wss://gateway-us-east1-c.discord.gg/?encoding=json&v=
 const GATEWAY_URL_ZSTD: &str = "wss://gateway-us-east1-c.discord.gg/?encoding=json&v=9&compress=zstd-stream";
 
 /// Capabilities bitmask for the IDENTIFY payload (user-account equivalent of
-/// gateway intents). Mirrors discord-control's hardcoded value of 16381.
+/// gateway intents). 16381 is the value the official Discord web client has
+/// shipped at time of writing; it enables every capability bit the user
+/// surface depends on. Bump it if Discord rolls a new client default.
 const DEFAULT_CAPABILITIES: u32 = 16381;
 
 /// Default `large_threshold` per Discord spec; valid range is 50–250.
@@ -108,6 +110,7 @@ pub enum Opcode {
     InvalidSession = 9,
     Hello = 10,
     HeartbeatAck = 11,
+    RequestChannelInfo = 43,
 }
 
 impl From<u8> for Opcode {
@@ -124,6 +127,7 @@ impl From<u8> for Opcode {
             9 => Opcode::InvalidSession,
             10 => Opcode::Hello,
             11 => Opcode::HeartbeatAck,
+            43 => Opcode::RequestChannelInfo,
             _ => Opcode::Dispatch,
         }
     }
@@ -208,6 +212,9 @@ pub struct Gateway {
     /// Negotiated transport compression flavour. Currently only changes the
     /// gateway URL; zstd payload decoding is a future task.
     compression_kind: CompressionKind,
+    /// Optional `[shard_id, shard_count]` array sent in IDENTIFY. Discord requires
+    /// sharding once a bot reaches 2 500 guilds and may force-close with code 4011.
+    shard: Option<[u32; 2]>,
     writer: Arc<RwLock<Option<WsWriter>>>,
     event_sender: broadcast::Sender<DispatchEvent>,
     heartbeat_interval: Arc<RwLock<u64>>,
@@ -252,6 +259,7 @@ impl Gateway {
                 intents: None,
                 large_threshold: DEFAULT_LARGE_THRESHOLD,
                 compression_kind: CompressionKind::None,
+                shard: None,
                 writer: Arc::new(RwLock::new(None)),
                 event_sender,
                 heartbeat_interval: Arc::new(RwLock::new(41250)),
@@ -293,6 +301,15 @@ impl Gateway {
     /// decoding is implemented in a follow-up task.
     pub fn with_compression(mut self, kind: CompressionKind) -> Self {
         self.compression_kind = kind;
+        self
+    }
+
+    /// Configure the IDENTIFY `shard` array as `[shard_id, shard_count]`.
+    ///
+    /// Discord requires sharding once a bot reaches 2 500 guilds and may
+    /// force-close with code 4011 ("sharding required") otherwise.
+    pub fn with_shard(mut self, shard_id: u32, shard_count: u32) -> Self {
+        self.shard = Some([shard_id, shard_count]);
         self
     }
 
@@ -396,6 +413,7 @@ impl Gateway {
         let capabilities = self.capabilities;
         let intents = self.intents;
         let large_threshold = self.large_threshold;
+        let shard = self.shard;
         let gateway_url: &'static str = self.gateway_url();
         let writer = Arc::clone(&self.writer);
         let event_sender = self.event_sender.clone();
@@ -476,7 +494,7 @@ impl Gateway {
                             match msg {
                                 Some(Ok(WsMessage::Text(text))) => {
                                     if let Err(e) = Self::handle_message(
-                                        &text, &token, custom_status, capabilities, intents, large_threshold,
+                                        &text, &token, custom_status, capabilities, intents, large_threshold, shard,
                                         &writer, &event_sender, &heartbeat_interval,
                                         &sequence, &session_id, &mut heartbeat_handle,
                                         &awaiting_ack, &last_sent, &latency, &stage, &pending_guilds,
@@ -495,7 +513,7 @@ impl Gateway {
                                     match Self::decompress_zlib(&bytes) {
                                         Ok(text) => {
                                             if let Err(e) = Self::handle_message(
-                                                &text, &token, custom_status, capabilities, intents, large_threshold,
+                                                &text, &token, custom_status, capabilities, intents, large_threshold, shard,
                                                 &writer, &event_sender, &heartbeat_interval,
                                                 &sequence, &session_id, &mut heartbeat_handle,
                                                 &awaiting_ack, &last_sent, &latency, &stage, &pending_guilds,
@@ -573,7 +591,7 @@ impl Gateway {
 
     /// Handle a single gateway message
     #[allow(clippy::too_many_arguments)]
-    async fn handle_message(text: &str, token: &str, custom_status: UserStatus, capabilities: u32, intents: Option<u64>, large_threshold: u16, writer: &Arc<RwLock<Option<WsWriter>>>, event_sender: &broadcast::Sender<DispatchEvent>, heartbeat_interval: &Arc<RwLock<u64>>, sequence: &Arc<RwLock<Option<u64>>>, session_id: &Arc<RwLock<Option<String>>>, heartbeat_handle: &mut Option<tokio::task::JoinHandle<()>>, awaiting_ack: &Arc<AtomicBool>, last_sent: &Arc<RwLock<Option<Instant>>>, latency: &Arc<RwLock<Option<Duration>>>, stage: &Arc<RwLock<ConnectionStage>>, pending_guilds: &Arc<AtomicUsize>) -> Result<()> {
+    async fn handle_message(text: &str, token: &str, custom_status: UserStatus, capabilities: u32, intents: Option<u64>, large_threshold: u16, shard: Option<[u32; 2]>, writer: &Arc<RwLock<Option<WsWriter>>>, event_sender: &broadcast::Sender<DispatchEvent>, heartbeat_interval: &Arc<RwLock<u64>>, sequence: &Arc<RwLock<Option<u64>>>, session_id: &Arc<RwLock<Option<String>>>, heartbeat_handle: &mut Option<tokio::task::JoinHandle<()>>, awaiting_ack: &Arc<AtomicBool>, last_sent: &Arc<RwLock<Option<Instant>>>, latency: &Arc<RwLock<Option<Duration>>>, stage: &Arc<RwLock<ConnectionStage>>, pending_guilds: &Arc<AtomicUsize>) -> Result<()> {
         let payload: GatewayPayload = serde_json::from_str(text)?;
         let opcode = Opcode::from(payload.op);
 
@@ -680,7 +698,7 @@ impl Gateway {
                             Self::send_resume(writer, token, session_id, sequence).await?;
                         } else {
                             *stage.write().await = ConnectionStage::Identifying;
-                            Self::send_identify(writer, token, custom_status, capabilities, intents, large_threshold).await?;
+                            Self::send_identify(writer, token, custom_status, capabilities, intents, large_threshold, shard).await?;
                         }
                     }
                 }
@@ -784,14 +802,14 @@ impl Gateway {
                     } else {
                         warn!("Op 9 said resumable but no cached session_id/seq — re-identifying instead");
                         *stage.write().await = ConnectionStage::Identifying;
-                        Self::send_identify(writer, token, custom_status, capabilities, intents, large_threshold).await?;
+                        Self::send_identify(writer, token, custom_status, capabilities, intents, large_threshold, shard).await?;
                     }
                 } else {
                     // Session is gone — clear state and perform a full IDENTIFY.
                     *session_id.write().await = None;
                     *sequence.write().await = None;
                     *stage.write().await = ConnectionStage::Identifying;
-                    Self::send_identify(writer, token, custom_status, capabilities, intents, large_threshold).await?;
+                    Self::send_identify(writer, token, custom_status, capabilities, intents, large_threshold, shard).await?;
                 }
             }
             _ => {
@@ -835,7 +853,7 @@ impl Gateway {
     /// by the Discord docs (valid range 50–250; clamped here as belt-and-braces).
     // TODO: route `large_threshold` through `DiscordUserBuilder` so callers can
     // tune it without touching `Gateway` directly.
-    async fn send_identify(writer: &Arc<RwLock<Option<WsWriter>>>, token: &str, status: UserStatus, capabilities: u32, intents: Option<u64>, large_threshold: u16) -> Result<()> {
+    async fn send_identify(writer: &Arc<RwLock<Option<WsWriter>>>, token: &str, status: UserStatus, capabilities: u32, intents: Option<u64>, large_threshold: u16, shard: Option<[u32; 2]>) -> Result<()> {
         let large_threshold = large_threshold.clamp(50, 250);
         let mut data = json!({
             "token": token,
@@ -879,6 +897,14 @@ impl Gateway {
         if let Some(intents) = intents {
             if let Some(obj) = data.as_object_mut() {
                 obj.insert("intents".to_string(), Value::from(intents));
+            }
+        }
+
+        // Sharding: Discord requires sharding once a bot reaches 2 500 guilds and
+        // emits close code 4011 ("sharding required") if absent. Shape: [id, count].
+        if let Some([shard_id, shard_count]) = shard {
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("shard".to_string(), json!([shard_id, shard_count]));
             }
         }
 
@@ -987,6 +1013,27 @@ impl Gateway {
         let payload = json!({
             "op": 31,
             "d": { "guild_ids": ids }
+        });
+        if let Some(ref mut w) = *self.writer.write().await {
+            w.send(WsMessage::Text(payload.to_string().into())).await?;
+        }
+        Ok(())
+    }
+
+    /// Send a Request Channel Info (opcode 43) payload.
+    ///
+    /// Discord uses this to request channel-info push events. Payload shape:
+    /// ```json
+    /// { "guild_id": "...", "channel_ids": ["..."] }
+    /// ```
+    pub async fn request_channel_info(&self, guild_id: u64, channel_ids: &[u64]) -> Result<()> {
+        let ids: Vec<Value> = channel_ids.iter().map(|id| Value::from(id.to_string())).collect();
+        let payload = json!({
+            "op": 43,
+            "d": {
+                "guild_id": guild_id.to_string(),
+                "channel_ids": ids,
+            }
         });
         if let Some(ref mut w) = *self.writer.write().await {
             w.send(WsMessage::Text(payload.to_string().into())).await?;

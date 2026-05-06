@@ -1,5 +1,7 @@
 //! Common request structures for Discord API
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 
 use crate::types::message::{PollAnswer, PollMedia};
@@ -188,6 +190,15 @@ pub struct EditThreadRequest {
     /// Slowmode rate-limit in seconds
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_limit_per_user: Option<u32>,
+    /// Whether non-moderators can add other non-moderators (private threads only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invitable: Option<bool>,
+    /// Channel/thread flags bitfield (e.g. PINNED = 1 << 1 for forum/media threads).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flags: Option<u64>,
+    /// Forum/media-channel tag IDs applied to this thread.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub applied_tags: Option<Vec<String>>,
 }
 
 /// Request body for POST /channels/{id}/webhooks (create a webhook).
@@ -914,6 +925,32 @@ pub struct EditChannelRequest {
     /// Move to a different parent category.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
+    /// Forum/media-channel ForumTag set (loose typing — values follow the
+    /// Discord ForumTag schema).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available_tags: Option<Vec<serde_json::Value>>,
+    /// Forum/media-channel default reaction emoji (DefaultReaction object:
+    /// `{ "emoji_id": ..., "emoji_name": ... }`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_reaction_emoji: Option<serde_json::Value>,
+    /// Forum sort order: 0 = LATEST_ACTIVITY, 1 = CREATION_DATE.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_sort_order: Option<u8>,
+    /// Forum layout: 0 = NOT_SET, 1 = LIST_VIEW, 2 = GALLERY_VIEW.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_forum_layout: Option<u8>,
+    /// Channel flags bitfield (e.g. REQUIRE_TAG = 1 << 4,
+    /// HIDE_MEDIA_DOWNLOAD_OPTIONS = 1 << 15).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flags: Option<u64>,
+    /// Default `rate_limit_per_user` applied to newly created threads in this
+    /// forum/media channel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_thread_rate_limit_per_user: Option<u32>,
+    /// Default auto-archive duration for threads created in this channel
+    /// (60, 1440, 4320, or 10080 minutes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_auto_archive_duration: Option<u32>,
 }
 
 /// Request body for PUT /channels/{id}/permissions/{overwrite_id}
@@ -983,4 +1020,83 @@ pub struct BulkBanRequest {
     /// (0–604800, i.e. up to 7 days).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delete_message_seconds: Option<u32>,
+}
+
+/// Request body for POST /applications/{app_id}/entitlements
+/// (create a test entitlement for development).
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateTestEntitlementRequest {
+    /// SKU snowflake ID this entitlement grants.
+    pub sku_id: String,
+    /// The owner this entitlement is granted to (guild ID or user ID).
+    pub owner_id: String,
+    /// Owner type: 1 = GUILD_SUBSCRIPTION, 2 = USER_SUBSCRIPTION.
+    pub owner_type: u8,
+}
+
+/// Request body for PUT /applications/{id}/role-connections/metadata.
+///
+/// Wraps the metadata record array Discord expects for the bulk-replace
+/// endpoint. Inner items follow the `ApplicationRoleConnectionMetadata` shape;
+/// loose typing is used here until a typed struct exists.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(transparent)]
+pub struct ApplicationRoleConnectionMetadataPutRequest {
+    /// The full metadata record set to apply (replaces existing records).
+    pub records: Vec<serde_json::Value>,
+}
+
+/// Request body for POST /lobbies (create a lobby).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CreateLobbyRequest {
+    /// Arbitrary key/value metadata stored on the lobby (max 25 entries,
+    /// 1024 chars per value).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, String>>,
+    /// Initial members for the lobby (LobbyMember-shaped objects).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub members: Option<Vec<serde_json::Value>>,
+    /// Seconds of inactivity before the lobby is automatically deleted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_timeout_seconds: Option<u32>,
+}
+
+/// Request body for PATCH /lobbies/{lobby_id} (modify a lobby).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ModifyLobbyRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub members: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_timeout_seconds: Option<u32>,
+}
+
+/// Request body for PUT /lobbies/{lobby_id}/members/{user_id}
+/// (add or update a single lobby member).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct AddLobbyMemberRequest {
+    /// Per-member metadata stored on the lobby member.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, String>>,
+    /// Lobby member flags bitfield (1 = CanLinkLobby).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flags: Option<u64>,
+}
+
+/// Request body for PUT /lobbies/{lobby_id}/members
+/// (bulk replace lobby members).
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(transparent)]
+pub struct BulkUpdateLobbyMembersRequest {
+    /// LobbyMember-shaped objects to apply as the full new member set.
+    pub members: Vec<serde_json::Value>,
+}
+
+/// Request body for PUT /lobbies/{lobby_id}/channel-linking
+/// (link a guild channel to a lobby).
+#[derive(Debug, Clone, Serialize)]
+pub struct LinkChannelToLobbyRequest {
+    /// Snowflake ID of the channel to link.
+    pub channel_id: String,
 }

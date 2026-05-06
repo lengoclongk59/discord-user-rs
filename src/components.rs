@@ -344,6 +344,16 @@ pub enum ComponentType {
     Separator = 14,
     /// V2: grouping container with optional accent color and spoiler.
     Container = 17,
+    /// V2: label wrapping a child input (typically TextInput) in a modal.
+    Label = 18,
+    /// V2: file upload input inside a modal.
+    FileUpload = 19,
+    /// V2: exclusive-choice radio group.
+    RadioGroup = 21,
+    /// V2: multi-choice checkbox group.
+    CheckboxGroup = 22,
+    /// V2: individual checkbox.
+    Checkbox = 23,
 }
 
 // ── Default value for auto-populated selects ─────────────────────────────────
@@ -425,6 +435,43 @@ impl MediaGalleryItem {
     /// Mark as spoiler.
     pub fn spoiler(mut self, spoiler: bool) -> Self {
         self.spoiler = Some(spoiler);
+        self
+    }
+}
+
+// ── Components V2 modal option helper ────────────────────────────────────────
+
+/// A single option inside a [`Component::RadioGroup`] or
+/// [`Component::CheckboxGroup`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RadioOption {
+    /// Displayed label.
+    pub label: String,
+    /// Value sent to the application when the option is selected.
+    pub value: String,
+    /// Optional descriptive text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Pre-selected as default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<bool>,
+}
+
+impl RadioOption {
+    /// Construct an option with the required label and value.
+    pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
+        Self { label: label.into(), value: value.into(), description: None, default: None }
+    }
+
+    /// Add a description line.
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Mark this option as the default selection.
+    pub fn default_selection(mut self, is_default: bool) -> Self {
+        self.default = Some(is_default);
         self
     }
 }
@@ -558,6 +605,66 @@ pub enum Component {
         spoiler: Option<bool>,
         id: Option<u32>,
     },
+
+    /// V2 — Label wrapping a child input (typically a `TextInput`) in a modal.
+    ///
+    /// Provides label and optional description text shown above the input.
+    Label {
+        /// Visible label (1–45 chars).
+        label: String,
+        /// Optional helper text shown below the label (0–100 chars).
+        description: Option<String>,
+        /// The wrapped child component (typically a single `TextInput`).
+        component: Box<Component>,
+        id: Option<u32>,
+    },
+
+    /// V2 — Modal file upload input.
+    FileUpload {
+        /// Developer identifier echoed in interactions.
+        custom_id: String,
+        /// Minimum number of files (default 1, range 0–10).
+        min_values: Option<u8>,
+        /// Maximum number of files (default 1, range 1–10).
+        max_values: Option<u8>,
+        /// Whether the input is required.
+        required: Option<bool>,
+        id: Option<u32>,
+    },
+
+    /// V2 — Exclusive-choice radio group used inside modals.
+    RadioGroup {
+        custom_id: String,
+        /// Available options.
+        options: Vec<RadioOption>,
+        /// Whether the input is required.
+        required: Option<bool>,
+        id: Option<u32>,
+    },
+
+    /// V2 — Multi-choice checkbox group used inside modals.
+    CheckboxGroup {
+        custom_id: String,
+        /// Available options (uses the same option struct as `RadioGroup`).
+        options: Vec<RadioOption>,
+        /// Minimum number of selections.
+        min_values: Option<u8>,
+        /// Maximum number of selections.
+        max_values: Option<u8>,
+        id: Option<u32>,
+    },
+
+    /// V2 — Individual checkbox.
+    Checkbox {
+        custom_id: String,
+        /// Visible label.
+        label: String,
+        /// Optional helper text.
+        description: Option<String>,
+        /// Whether the checkbox is checked by default.
+        default: Option<bool>,
+        id: Option<u32>,
+    },
 }
 
 // Custom (de)serialization for the integer `type` tag.
@@ -657,6 +764,44 @@ impl Serialize for Component {
                 obj.insert("components".into(), serde_json::to_value(components).map_err(serde::ser::Error::custom)?);
                 insert_opt(&mut obj, "accent_color", accent_color.as_ref().map(|x| json!(x)));
                 insert_opt(&mut obj, "spoiler", spoiler.as_ref().map(|x| json!(x)));
+                insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
+            }
+            Component::Label { label, description, component, id } => {
+                obj.insert("type".into(), json!(ComponentType::Label as u8));
+                obj.insert("label".into(), json!(label));
+                insert_opt(&mut obj, "description", description.as_ref().map(|x| json!(x)));
+                obj.insert("component".into(), serde_json::to_value(component.as_ref()).map_err(serde::ser::Error::custom)?);
+                insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
+            }
+            Component::FileUpload { custom_id, min_values, max_values, required, id } => {
+                obj.insert("type".into(), json!(ComponentType::FileUpload as u8));
+                obj.insert("custom_id".into(), json!(custom_id));
+                insert_opt(&mut obj, "min_values", min_values.as_ref().map(|x| json!(x)));
+                insert_opt(&mut obj, "max_values", max_values.as_ref().map(|x| json!(x)));
+                insert_opt(&mut obj, "required", required.as_ref().map(|x| json!(x)));
+                insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
+            }
+            Component::RadioGroup { custom_id, options, required, id } => {
+                obj.insert("type".into(), json!(ComponentType::RadioGroup as u8));
+                obj.insert("custom_id".into(), json!(custom_id));
+                obj.insert("options".into(), serde_json::to_value(options).map_err(serde::ser::Error::custom)?);
+                insert_opt(&mut obj, "required", required.as_ref().map(|x| json!(x)));
+                insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
+            }
+            Component::CheckboxGroup { custom_id, options, min_values, max_values, id } => {
+                obj.insert("type".into(), json!(ComponentType::CheckboxGroup as u8));
+                obj.insert("custom_id".into(), json!(custom_id));
+                obj.insert("options".into(), serde_json::to_value(options).map_err(serde::ser::Error::custom)?);
+                insert_opt(&mut obj, "min_values", min_values.as_ref().map(|x| json!(x)));
+                insert_opt(&mut obj, "max_values", max_values.as_ref().map(|x| json!(x)));
+                insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
+            }
+            Component::Checkbox { custom_id, label, description, default, id } => {
+                obj.insert("type".into(), json!(ComponentType::Checkbox as u8));
+                obj.insert("custom_id".into(), json!(custom_id));
+                obj.insert("label".into(), json!(label));
+                insert_opt(&mut obj, "description", description.as_ref().map(|x| json!(x)));
+                insert_opt(&mut obj, "default", default.as_ref().map(|x| json!(x)));
                 insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
             }
         }
@@ -768,6 +913,56 @@ impl<'de> Deserialize<'de> for Component {
                 spoiler: opt_bool("spoiler"),
                 id: opt_u32("id"),
             },
+            18 => {
+                let component = obj.get("component")
+                    .map(|v| serde_json::from_value::<Component>(v.clone()).map_err(serde::de::Error::custom))
+                    .ok_or_else(|| serde::de::Error::custom("missing `component` object"))??;
+                Component::Label {
+                    label: take_str("label")?,
+                    description: opt_str("description"),
+                    component: Box::new(component),
+                    id: opt_u32("id"),
+                }
+            }
+            19 => Component::FileUpload {
+                custom_id: take_str("custom_id")?,
+                min_values: opt_u8("min_values"),
+                max_values: opt_u8("max_values"),
+                required: opt_bool("required"),
+                id: opt_u32("id"),
+            },
+            21 => {
+                let options = obj.get("options")
+                    .map(|v| serde_json::from_value::<Vec<RadioOption>>(v.clone()).map_err(serde::de::Error::custom))
+                    .transpose()?
+                    .ok_or_else(|| serde::de::Error::custom("missing `options` array"))?;
+                Component::RadioGroup {
+                    custom_id: take_str("custom_id")?,
+                    options,
+                    required: opt_bool("required"),
+                    id: opt_u32("id"),
+                }
+            }
+            22 => {
+                let options = obj.get("options")
+                    .map(|v| serde_json::from_value::<Vec<RadioOption>>(v.clone()).map_err(serde::de::Error::custom))
+                    .transpose()?
+                    .ok_or_else(|| serde::de::Error::custom("missing `options` array"))?;
+                Component::CheckboxGroup {
+                    custom_id: take_str("custom_id")?,
+                    options,
+                    min_values: opt_u8("min_values"),
+                    max_values: opt_u8("max_values"),
+                    id: opt_u32("id"),
+                }
+            }
+            23 => Component::Checkbox {
+                custom_id: take_str("custom_id")?,
+                label: take_str("label")?,
+                description: opt_str("description"),
+                default: opt_bool("default"),
+                id: opt_u32("id"),
+            },
             other => return Err(serde::de::Error::custom(format!("unsupported component type tag: {other}"))),
         };
         Ok(comp)
@@ -822,6 +1017,60 @@ impl Component {
     /// Construct a [`Component::Container`] holding the given children.
     pub fn container(components: Vec<Component>) -> Self {
         Self::Container { components, accent_color: None, spoiler: None, id: None }
+    }
+
+    /// Construct a [`Component::Label`] wrapping a single child input
+    /// (typically a `TextInput`) inside a V2 modal.
+    pub fn label(label: impl Into<String>, component: Component) -> Self {
+        Self::Label {
+            label: label.into(),
+            description: None,
+            component: Box::new(component),
+            id: None,
+        }
+    }
+
+    /// Construct a [`Component::FileUpload`] modal input.
+    pub fn file_upload(custom_id: impl Into<String>) -> Self {
+        Self::FileUpload {
+            custom_id: custom_id.into(),
+            min_values: None,
+            max_values: None,
+            required: None,
+            id: None,
+        }
+    }
+
+    /// Construct a [`Component::RadioGroup`] from a list of options.
+    pub fn radio_group(custom_id: impl Into<String>, options: Vec<RadioOption>) -> Self {
+        Self::RadioGroup {
+            custom_id: custom_id.into(),
+            options,
+            required: None,
+            id: None,
+        }
+    }
+
+    /// Construct a [`Component::CheckboxGroup`] from a list of options.
+    pub fn checkbox_group(custom_id: impl Into<String>, options: Vec<RadioOption>) -> Self {
+        Self::CheckboxGroup {
+            custom_id: custom_id.into(),
+            options,
+            min_values: None,
+            max_values: None,
+            id: None,
+        }
+    }
+
+    /// Construct a single [`Component::Checkbox`].
+    pub fn checkbox(custom_id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::Checkbox {
+            custom_id: custom_id.into(),
+            label: label.into(),
+            description: None,
+            default: None,
+            id: None,
+        }
     }
 }
 

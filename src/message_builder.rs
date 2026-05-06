@@ -85,7 +85,7 @@ impl<'a> MessageBuilder<'a> {
     /// guild.
     pub fn reply_to(mut self, message_id: impl Into<String>) -> Self {
         let msg_id = message_id.into();
-        self.reply_reference = Some(MessageReference { message_id: Some(msg_id), channel_id: self.channel_id.clone(), guild_id: self.guild_id.clone() });
+        self.reply_reference = Some(MessageReference { message_id: Some(msg_id), channel_id: self.channel_id.clone(), guild_id: self.guild_id.clone(), reference_type: None });
         self
     }
 
@@ -100,6 +100,7 @@ impl<'a> MessageBuilder<'a> {
             message_id: Some(message_id.into()),
             channel_id: Some(channel_id.into()),
             guild_id: guild_id.map(|g| g.into()),
+            reference_type: None,
         });
         self
     }
@@ -444,6 +445,7 @@ impl EmbedBuilder {
             provider: None,
             author: self.author,
             fields: self.fields,
+            flags: None,
         }
     }
 }

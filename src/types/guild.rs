@@ -83,6 +83,8 @@ pub struct Guild {
     #[serde(default)]
     pub member_count: Option<u32>,
     #[serde(default)]
+    pub home_header: Option<String>,
+    #[serde(default)]
     pub premium_subscription_count: u32,
     #[serde(default)]
     pub premium_tier: u8,
@@ -347,6 +349,8 @@ pub struct Role {
     pub name: String,
     #[serde(default)]
     pub color: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colors: Option<RoleColors>,
     #[serde(default)]
     pub hoist: bool,
     #[serde(default)]
@@ -365,6 +369,18 @@ pub struct Role {
     pub flags: u32,
     #[serde(default)]
     pub tags: Option<serde_json::Value>,
+}
+
+/// Gradient colors for a role.
+///
+/// Discord supports up to three colors per role for gradient styling.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoleColors {
+    pub primary_color: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secondary_color: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tertiary_color: Option<u32>,
 }
 
 impl Role {
@@ -645,9 +661,11 @@ pub struct AutoModerationRule {
     /// 5=MEMBER_PROFILE.
     pub trigger_type: u8,
     /// Trigger metadata (keyword lists, presets, thresholds).
-    pub trigger_metadata: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_metadata: Option<AutoModerationTriggerMetadata>,
     /// Actions to perform when the rule is triggered.
-    pub actions: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub actions: Vec<AutoModerationAction>,
     /// Whether the rule is enabled.
     #[serde(default)]
     pub enabled: bool,
@@ -657,6 +675,49 @@ pub struct AutoModerationRule {
     /// Role IDs exempt from the rule.
     #[serde(default)]
     pub exempt_roles: Vec<String>,
+}
+
+/// Trigger metadata for an [`AutoModerationRule`].
+///
+/// Fields are only populated for the relevant trigger types — for example,
+/// `keyword_filter` and `regex_patterns` apply to KEYWORD rules, while
+/// `presets` / `allow_list` apply to KEYWORD_PRESET, etc.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AutoModerationTriggerMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyword_filter: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regex_patterns: Option<Vec<String>>,
+    /// Preset IDs (see `AutoModerationKeywordPresetType`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presets: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_list: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mention_total_limit: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mention_raid_protection_enabled: Option<bool>,
+}
+
+/// An action performed when an [`AutoModerationRule`] is triggered.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoModerationAction {
+    /// Action type (see `AutoModerationActionType`).
+    #[serde(rename = "type")]
+    pub action_type: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<AutoModerationActionMetadata>,
+}
+
+/// Additional metadata for an [`AutoModerationAction`].
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AutoModerationActionMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_seconds: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_message: Option<String>,
 }
 
 /// A guild scheduled event.
@@ -842,4 +903,15 @@ pub struct ApplicationCommand {
 
 fn default_command_type() -> u8 {
     1
+}
+
+bitflags::bitflags! {
+    /// Bitfield helpers for [`Role::flags`].
+    ///
+    /// See <https://discord.com/developers/docs/topics/permissions#role-object-role-flags>.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    pub struct RoleFlags: u64 {
+        /// Role can be selected by members in an onboarding prompt.
+        const IN_PROMPT = 1 << 0;
+    }
 }
