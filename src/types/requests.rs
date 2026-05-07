@@ -1011,6 +1011,23 @@ pub struct WelcomeScreenModifyRequest {
     pub description: Option<String>,
 }
 
+/// Request body for PUT /guilds/{guild.id}/onboarding (modify guild onboarding).
+#[derive(Debug, Clone, Serialize)]
+pub struct ModifyGuildOnboardingRequest {
+    /// Prompts shown during onboarding and in customize community.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<Vec<serde_json::Value>>,
+    /// Channel IDs that members get opted into automatically.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_channel_ids: Option<Vec<String>>,
+    /// Whether onboarding is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// 0 = ONBOARDING_DEFAULT, 1 = ONBOARDING_ADVANCED.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<u8>,
+}
+
 /// Request body for POST /guilds/{id}/bulk-ban (bulk-ban guild members).
 #[derive(Debug, Clone, Serialize)]
 pub struct BulkBanRequest {

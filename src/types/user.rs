@@ -188,6 +188,9 @@ pub struct Member {
     /// Member-level avatar decoration data (currently a free-form object).
     #[serde(default)]
     pub avatar_decoration_data: Option<serde_json::Value>,
+    /// Collectibles object (e.g., owned nameplates, avatar decorations).
+    #[serde(default)]
+    pub collectibles: Option<serde_json::Value>,
 }
 
 impl Member {

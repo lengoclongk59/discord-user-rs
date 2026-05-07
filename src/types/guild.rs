@@ -132,6 +132,60 @@ pub struct WelcomeChannel {
     pub emoji_name: Option<String>,
 }
 
+/// Guild onboarding configuration.
+///
+/// Returned by `GET /guilds/{guild.id}/onboarding`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuildOnboarding {
+    pub guild_id: String,
+    #[serde(default)]
+    pub prompts: Vec<OnboardingPrompt>,
+    #[serde(default)]
+    pub default_channel_ids: Vec<String>,
+    #[serde(default)]
+    pub enabled: bool,
+    /// 0 = ONBOARDING_DEFAULT, 1 = ONBOARDING_ADVANCED.
+    #[serde(default)]
+    pub mode: u8,
+}
+
+/// A single prompt shown during guild onboarding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnboardingPrompt {
+    pub id: String,
+    /// 0 = MULTIPLE_CHOICE, 1 = DROPDOWN.
+    #[serde(rename = "type", default)]
+    pub kind: u8,
+    #[serde(default)]
+    pub options: Vec<PromptOption>,
+    pub title: String,
+    #[serde(default)]
+    pub single_select: bool,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub in_onboarding: bool,
+}
+
+/// An option inside an [`OnboardingPrompt`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptOption {
+    pub id: String,
+    #[serde(default)]
+    pub channel_ids: Vec<String>,
+    #[serde(default)]
+    pub role_ids: Vec<String>,
+    #[serde(default)]
+    pub emoji_id: Option<String>,
+    #[serde(default)]
+    pub emoji_name: Option<String>,
+    #[serde(default)]
+    pub emoji_animated: Option<bool>,
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
 /// Guild incidents data — administrative pause flags / detection timestamps.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncidentsData {

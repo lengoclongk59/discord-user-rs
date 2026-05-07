@@ -567,14 +567,14 @@ pub trait GuildOps: DiscordContext {
     /// Fetch the onboarding configuration for a guild.
     ///
     /// `GET /guilds/{guild.id}/onboarding`
-    async fn get_guild_onboarding(&self, guild_id: &GuildId) -> Result<Value> {
+    async fn get_guild_onboarding(&self, guild_id: &GuildId) -> Result<crate::types::guild::GuildOnboarding> {
         self.http().get(Route::GuildOnboarding { guild_id: guild_id.get() }).await
     }
 
     /// Replace the onboarding configuration for a guild.
     ///
     /// `PUT /guilds/{guild.id}/onboarding`
-    async fn modify_guild_onboarding(&self, guild_id: &GuildId, body: Value) -> Result<Value> {
+    async fn modify_guild_onboarding(&self, guild_id: &GuildId, body: crate::types::requests::ModifyGuildOnboardingRequest) -> Result<crate::types::guild::GuildOnboarding> {
         self.http().put(Route::GuildOnboarding { guild_id: guild_id.get() }, body).await
     }
 

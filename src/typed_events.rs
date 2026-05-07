@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::types::{Channel, Guild, Member, Message, Relationship, Role, User};
+use crate::types::{AuditLogChange, Channel, Guild, Member, Message, PartialApplication, Relationship, Role, User};
 
 // ==================== Typed Event Structs ====================
 
@@ -32,6 +32,9 @@ pub struct ReadyEvent {
     /// Guild data
     #[serde(default)]
     pub guilds: Vec<Value>,
+    /// Partial application object with id and flags (present for bot accounts)
+    #[serde(default)]
+    pub application: Option<PartialApplication>,
 }
 
 /// RESUMED event data — sent after a successful session resume.
@@ -583,7 +586,7 @@ pub struct GuildAuditLogEntryCreateEvent {
     #[serde(default)]
     pub target_id: Option<String>,
     #[serde(default)]
-    pub changes: Vec<serde_json::Value>,
+    pub changes: Vec<AuditLogChange>,
     #[serde(default)]
     pub options: Option<serde_json::Value>,
     #[serde(default)]

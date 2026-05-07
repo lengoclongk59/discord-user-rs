@@ -1,6 +1,15 @@
 use serde::{Deserialize, Serialize};
 use crate::types::user::User;
 
+/// Partial application object included in the Ready event.
+/// Contains only `id` and `flags` as specified by the Discord API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PartialApplication {
+    pub id: String,
+    #[serde(default)]
+    pub flags: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Application {
     pub id: String,

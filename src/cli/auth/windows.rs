@@ -261,8 +261,26 @@ fn scan_bytes_for_prefix<'a>(haystack: &'a [u8], prefix: &'a [u8]) -> Vec<Vec<u8
         if &haystack[i..i + prefix.len()] == prefix {
             let start = i + prefix.len();
             let mut end = start;
-            while end < haystack.len() && BASE64_CHARS.contains(&haystack[end]) {
+            // Consume the base64 alphabet *excluding* `=`. A run that bleeds
+            // across leveldb record boundaries via additional `=` chars used
+            // to inflate decoded ciphertext sizes and waste AES-GCM attempts
+            // on garbage.
+            while end < haystack.len() {
+                let b = haystack[end];
+                if b == b'=' {
+                    break;
+                }
+                if !BASE64_CHARS.contains(&b) {
+                    break;
+                }
                 end += 1;
+            }
+            // Permit up to 2 trailing pad chars (the maximum standard base64
+            // ever emits) and then hard-stop.
+            let mut pad = 0;
+            while pad < 2 && end < haystack.len() && haystack[end] == b'=' {
+                end += 1;
+                pad += 1;
             }
             // Discord token ciphertexts are typically 200+ bytes after base64
             // encoding; require a sane minimum to avoid spurious matches.
