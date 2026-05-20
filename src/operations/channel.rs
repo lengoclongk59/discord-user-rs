@@ -72,6 +72,21 @@ pub trait ChannelOps: DiscordContext {
         self.http().post(Route::CreateGuildChannel { guild_id: guild_id.get() }, req).await
     }
 
+    /// List all channels (including categories) in a guild
+    /// (`GET /guilds/{id}/channels`).
+    ///
+    /// `Guild.channels` is populated only when the `Guild` object is
+    /// received via the GUILD_CREATE / GUILD_UPDATE gateway dispatch —
+    /// the REST endpoint `GET /guilds/{id}` does NOT include channels.
+    /// Use this method when you need a fresh REST-driven snapshot
+    /// (e.g. bot startup, cache rebuild).
+    ///
+    /// # Errors
+    /// Returns [`DiscordError::Http`] on HTTP failure.
+    async fn get_guild_channels(&self, guild_id: &GuildId) -> Result<Vec<Channel>> {
+        self.http().get(Route::GetGuildChannels { guild_id: guild_id.get() }).await
+    }
+
     /// Edit a channel's settings (PATCH /channels/{id}).
     ///
     /// # Errors
