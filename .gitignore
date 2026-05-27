@@ -2,3 +2,7 @@
 Cargo.lock
 .idea/
 .omc/
+
+# Runtime artifacts (archival CLI sqlite + local skill notes)
+discord.db
+SKILL.md
