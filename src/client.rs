@@ -339,6 +339,15 @@ impl DiscordHttpClient {
         &self.token
     }
 
+    /// Returns `true` when the configured token is a real Discord bot token
+    /// (`Authorization: Bot <token>`), `false` for user-account self-bot
+    /// tokens. Operations that send body fields specific to one identity
+    /// kind (e.g. `mobile_network_type` for user accounts) use this hook to
+    /// emit the right payload shape per identity.
+    pub fn is_bot_token(&self) -> bool {
+        self.token.trim_start().starts_with("Bot ")
+    }
+
     /// Set a callback to execute when rate limited
     pub fn set_ratelimit_callback(&mut self, callback: std::sync::Arc<dyn Fn(RatelimitInfo) + Send + Sync>) {
         self.ratelimit.callback = Some(callback);

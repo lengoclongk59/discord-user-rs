@@ -44,16 +44,19 @@ pub trait MessageOps: DiscordContext {
     async fn send_message(&self, channel_id: &ChannelId, content: &str, reply: Option<MessageReference>) -> Result<Message> {
         crate::validate::validate_message_content(content).map_err(crate::error::DiscordError::Model)?;
 
+        // User-account tokens send `mobile_network_type: "unknown"` to mimic
+        // the official Discord mobile client (helps avoid self-bot detection
+        // via simple fingerprint matching). Real bot tokens are rejected
+        // with HTTP 403 code 40333 "internal network error" when this field
+        // is present — Discord's bot endpoint validates strictly. Branch on
+        // the token prefix so the same helper works for both identities.
+        let mobile_network_type = if self.http().is_bot_token() { None } else { Some("unknown") };
         let payload = SendMessageRequest {
             content,
             tts: false,
             flags: 0,
             message_reference: reply,
-            // `mobile_network_type` intentionally left `None`: real bot tokens
-            // (Authorization: Bot ...) are rejected by Discord with HTTP 403
-            // code 40333 "internal network error" when this user-account
-            // fingerprint field is present. Self-bot user-token callers who
-            // want it for telemetry can set it via the MessageBuilder.
+            mobile_network_type,
             ..Default::default()
         };
 
@@ -91,7 +94,11 @@ pub trait MessageOps: DiscordContext {
             .await;
 
         // Send the message
-        let payload = SendMessageRequest { content: &content_str, tts: false, flags: 0, ..Default::default() };
+        // Same self-bot vs bot split as `send_message`. See that function's
+        // comment for why `mobile_network_type` must be omitted under
+        // `Authorization: Bot ...`.
+        let mobile_network_type = if self.http().is_bot_token() { None } else { Some("unknown") };
+        let payload = SendMessageRequest { content: &content_str, tts: false, flags: 0, mobile_network_type, ..Default::default() };
 
         let _msg: Message = self.http().post(crate::route::Route::CreateMessage { channel_id: channel_id.get() }, payload).await.with_context(|| format!("Failed to send RPC message to channel {}", channel_id.get()))?;
 
