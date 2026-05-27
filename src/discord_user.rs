@@ -66,6 +66,12 @@ pub struct DiscordUser {
     event_buffer_size: usize,
     /// Capabilities bitmask for the IDENTIFY payload (user-account intents)
     capabilities: u32,
+    /// Optional gateway intents bitmask for bot-token connections. When
+    /// `Some`, the IDENTIFY payload includes the `intents` field, which is
+    /// required for real Discord bot tokens (Application ID / "Bot ..."
+    /// authorization). User-account tokens leave this `None` and use
+    /// `capabilities` instead.
+    intents: Option<u64>,
     /// In-memory event-driven cache (guilds, users, messages)
     #[cfg(feature = "cache")]
     cache: crate::cache::Cache,
@@ -112,6 +118,7 @@ impl DiscordUser {
             max_reconnect_attempts: 5,
             event_buffer_size: 256,
             capabilities: 16381,
+            intents: None,
             #[cfg(feature = "cache")]
             cache: crate::cache::Cache::new(),
         }
@@ -133,6 +140,7 @@ impl DiscordUser {
             max_reconnect_attempts: 5,
             event_buffer_size: 256,
             capabilities: 16381,
+            intents: None,
             #[cfg(feature = "cache")]
             cache: crate::cache::Cache::new(),
         })
@@ -154,12 +162,33 @@ impl DiscordUser {
         self
     }
 
+    /// Enable bot-token IDENTIFY mode by setting the gateway `intents`
+    /// bitmask.
+    ///
+    /// Real Discord bot tokens (from the Developer Portal, used with
+    /// `Authorization: Bot <token>`) require an explicit `intents` field in
+    /// the IDENTIFY payload — without it Discord closes the gateway with
+    /// code 4013 "Invalid intent(s)". Self-bot user-tokens leave this unset
+    /// (the default) and rely on `capabilities`.
+    ///
+    /// Privileged intents (`MESSAGE_CONTENT`, `GUILD_MEMBERS`,
+    /// `GUILD_PRESENCES`) must also be enabled in the Developer Portal
+    /// before being requested here, or the gateway closes with 4014
+    /// "Disallowed intents".
+    pub fn with_intents(mut self, intents: u64) -> Self {
+        self.intents = Some(intents);
+        self
+    }
+
     /// Initialize the WebSocket connection
     pub async fn init(&mut self) -> Result<()> {
         use crate::operations::RelationshipOps;
 
         let token = self.http.token().to_string();
         let (mut gateway, event_receiver) = Gateway::new_with_capabilities(token, self.custom_status, self.event_buffer_size, self.capabilities);
+        if let Some(intents) = self.intents {
+            gateway = gateway.with_intents(intents);
+        }
 
         gateway.connect_with_auto_reconnect(self.max_reconnect_attempts).await?;
 
@@ -650,6 +679,9 @@ pub struct DiscordUserBuilder {
     proxy: Option<String>,
     ratelimiter_disabled: bool,
     capabilities: u32,
+    /// Optional gateway intents bitmask for bot-token connections. See
+    /// [`DiscordUser::with_intents`] for semantics.
+    intents: Option<u64>,
     #[cfg(feature = "cache")]
     cache_settings: crate::cache::CacheSettings,
 }
@@ -672,6 +704,7 @@ impl DiscordUserBuilder {
             proxy: None,
             ratelimiter_disabled: false,
             capabilities: 16381,
+            intents: None,
             #[cfg(feature = "cache")]
             cache_settings: crate::cache::CacheSettings::default(),
         }
@@ -737,6 +770,14 @@ impl DiscordUserBuilder {
         self
     }
 
+    /// Enable bot-token IDENTIFY mode by setting the gateway `intents`
+    /// bitmask. See [`DiscordUser::with_intents`] for the full semantics
+    /// and the Developer Portal requirements for privileged intents.
+    pub fn intents(mut self, intents: u64) -> Self {
+        self.intents = Some(intents);
+        self
+    }
+
     /// Build the DiscordUser
     pub fn build(self) -> Result<DiscordUser> {
         let token = self.token.ok_or_else(|| crate::error::DiscordError::InvalidRequest("Token is required".into()))?;
@@ -757,6 +798,7 @@ impl DiscordUserBuilder {
             max_reconnect_attempts: self.max_reconnect_attempts,
             event_buffer_size: self.event_buffer_size,
             capabilities: self.capabilities,
+            intents: self.intents,
             #[cfg(feature = "cache")]
             cache: crate::cache::Cache::with_settings(self.cache_settings),
         })
