@@ -451,7 +451,7 @@ impl DiscordHttpClient {
                             self.ratelimit.record_429(&route_key, response.headers(), info.retry_after);
                         }
                         let wait_time = if info.retry_after < 2.0 { 2.0 } else { info.retry_after };
-                        warn!("Rate limited on multipart, waiting {:.2}s", wait_time);
+                        debug!("Rate limited on multipart, waiting {:.2}s", wait_time);
                         tokio::time::sleep(Duration::from_secs_f64(wait_time)).await;
                         continue;
                     }
@@ -723,7 +723,7 @@ impl DiscordHttpClient {
                         // Enforce minimum wait time of 2.0s to avoid spamming if server sends 0 or
                         // missing header
                         let wait_time = if info.retry_after < 2.0 { 2.0 } else { info.retry_after };
-                        warn!("Rate limited (global: {}), waiting {:.2} seconds", info.global, wait_time);
+                        debug!("Rate limited (global: {}), waiting {:.2} seconds", info.global, wait_time);
 
                         // If it's a global rate limit, acquire the global lock across all routes
                         // This prevents any other requests from proceeding while we sleep
