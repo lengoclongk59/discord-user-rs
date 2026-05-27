@@ -49,7 +49,11 @@ pub trait MessageOps: DiscordContext {
             tts: false,
             flags: 0,
             message_reference: reply,
-            mobile_network_type: "unknown",
+            // `mobile_network_type` intentionally left `None`: real bot tokens
+            // (Authorization: Bot ...) are rejected by Discord with HTTP 403
+            // code 40333 "internal network error" when this user-account
+            // fingerprint field is present. Self-bot user-token callers who
+            // want it for telemetry can set it via the MessageBuilder.
             ..Default::default()
         };
 
@@ -87,7 +91,7 @@ pub trait MessageOps: DiscordContext {
             .await;
 
         // Send the message
-        let payload = SendMessageRequest { content: &content_str, tts: false, flags: 0, mobile_network_type: "unknown", ..Default::default() };
+        let payload = SendMessageRequest { content: &content_str, tts: false, flags: 0, ..Default::default() };
 
         let _msg: Message = self.http().post(crate::route::Route::CreateMessage { channel_id: channel_id.get() }, payload).await.with_context(|| format!("Failed to send RPC message to channel {}", channel_id.get()))?;
 

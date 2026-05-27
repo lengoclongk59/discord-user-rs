@@ -137,7 +137,7 @@ impl Message {
             flags: 0,
             message_reference: Some(self.as_reference()),
             nonce: None,
-            mobile_network_type: "unknown",
+            mobile_network_type: None,
         }
     }
 
@@ -493,12 +493,21 @@ pub struct SendMessageRequest<'a> {
     pub message_reference: Option<MessageReference>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nonce: Option<&'a str>,
-    pub mobile_network_type: &'a str,
+    /// Mobile-client telemetry field. **Must be `None` for real bot tokens**
+    /// — Discord's bot endpoint rejects POST /channels/{id}/messages with
+    /// HTTP 403 `code 40333 "internal network error"` when this field is
+    /// present (it's a user-account-only fingerprint and bot endpoints
+    /// validate strictly). For self-bot user tokens you may pass
+    /// `Some("unknown")`, `Some("wifi")` etc. to mimic the Discord mobile
+    /// client; the `send_message` helper does not set it, so use the
+    /// builder if you specifically need it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mobile_network_type: Option<&'a str>,
 }
 
 impl<'a> Default for SendMessageRequest<'a> {
     fn default() -> Self {
-        Self { content: "", tts: false, flags: 0, message_reference: None, nonce: None, mobile_network_type: "unknown" }
+        Self { content: "", tts: false, flags: 0, message_reference: None, nonce: None, mobile_network_type: None }
     }
 }
 
