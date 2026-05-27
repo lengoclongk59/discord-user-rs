@@ -339,13 +339,20 @@ impl DiscordHttpClient {
         &self.token
     }
 
-    /// Returns `true` when the configured token is a real Discord bot token
-    /// (`Authorization: Bot <token>`), `false` for user-account self-bot
-    /// tokens. Operations that send body fields specific to one identity
-    /// kind (e.g. `mobile_network_type` for user accounts) use this hook to
-    /// emit the right payload shape per identity.
-    pub fn is_bot_token(&self) -> bool {
-        self.token.trim_start().starts_with("Bot ")
+    /// Returns `true` when the configured token represents a Discord
+    /// **application identity** — either a real bot token
+    /// (`Authorization: Bot <token>`) or an OAuth2 access token
+    /// (`Authorization: Bearer <token>`). Returns `false` for
+    /// user-account self-bot tokens (bare token, no prefix).
+    ///
+    /// Operations that send body fields specific to the user-account
+    /// identity (e.g. the `mobile_network_type` mobile-client fingerprint)
+    /// use this hook to omit those fields under application identities —
+    /// Discord's bot/OAuth2 endpoints reject them with HTTP 403 code
+    /// 40333 "internal network error".
+    pub fn is_application_token(&self) -> bool {
+        let t = self.token.trim_start();
+        t.starts_with("Bot ") || t.starts_with("Bearer ")
     }
 
     /// Set a callback to execute when rate limited

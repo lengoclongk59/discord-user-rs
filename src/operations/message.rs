@@ -50,7 +50,7 @@ pub trait MessageOps: DiscordContext {
         // with HTTP 403 code 40333 "internal network error" when this field
         // is present — Discord's bot endpoint validates strictly. Branch on
         // the token prefix so the same helper works for both identities.
-        let mobile_network_type = if self.http().is_bot_token() { None } else { Some("unknown") };
+        let mobile_network_type = if self.http().is_application_token() { None } else { Some("unknown") };
         let payload = SendMessageRequest {
             content,
             tts: false,
@@ -97,7 +97,7 @@ pub trait MessageOps: DiscordContext {
         // Same self-bot vs bot split as `send_message`. See that function's
         // comment for why `mobile_network_type` must be omitted under
         // `Authorization: Bot ...`.
-        let mobile_network_type = if self.http().is_bot_token() { None } else { Some("unknown") };
+        let mobile_network_type = if self.http().is_application_token() { None } else { Some("unknown") };
         let payload = SendMessageRequest { content: &content_str, tts: false, flags: 0, mobile_network_type, ..Default::default() };
 
         let _msg: Message = self.http().post(crate::route::Route::CreateMessage { channel_id: channel_id.get() }, payload).await.with_context(|| format!("Failed to send RPC message to channel {}", channel_id.get()))?;
