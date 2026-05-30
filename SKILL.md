@@ -79,7 +79,7 @@ ID arguments are raw snowflakes for write commands. Read commands that take `<gu
 | `dc sync-all [-n N=200]` | Discover every guild+text channel and sync each |
 | `dc history <channel> [-n N=1000]` | Backfill older messages |
 | `dc tail <channel> [-n N=20] [--once]` | Live-stream via Gateway WebSocket (`--once` = snapshot then exit) |
-| `dc search <guild> <keyword> [-c CHAN] [-n N=25]` | Remote search via Discord's API |
+| `dc search <guild> [keyword] [-c CHAN] [--author ID] [--mentions ID] [--has link\|embed\|file\|image\|video\|sound] [--pinned] [--before ID] [--after ID] [-n N=25]` | Remote search via Discord's API; keyword optional when another filter is given |
 | `dc members <guild> [-n N=50]` | List members |
 | `dc info <guild>` | Guild details |
 | `dc pins <channel>` | Pinned messages |
@@ -89,10 +89,11 @@ ID arguments are raw snowflakes for write commands. Read commands that take `<gu
 | `dc emojis <guild>` | List custom emojis |
 | `dc stickers <guild>` | List custom stickers |
 | `dc profile [USER_ID]` | Profile (self if omitted) |
-| `dc audit <guild> [-n N=50]` | Audit log (`-n` is `u8`, max 255) |
+| `dc audit <guild> [-n N=50] [--user ID] [--action-type N] [--before ID] [--after ID]` | Audit log (`-n` is `u8`, max 255); filter by moderator, action type, and ID cursors |
 | `dc events <guild>` | Scheduled events |
 | `dc download <channel> [-o DIR=downloads] [--hours N]` | Save attachments from stored messages |
 | `dc snapshot <guild> [-o FILE]` | Dump full guild as JSON (stdout if no `-o`) |
+| `dc dms` | List your open DM and group-DM channels (`GET /users/@me/channels`) |
 
 ### `dc` — write / client (flat verbs)
 
@@ -100,7 +101,7 @@ These mutate Discord state. For **user** tokens, `dc send`/`dc dm` auto-include 
 
 | Command | What it does |
 |---|---|
-| `dc send <channel> <content> [--reply MSG] [--file PATH …] [--sticker ID …]` | Send a message; `--reply` makes it a reply; `--file` attaches files (repeatable, multipart); `--sticker` attaches stickers (repeatable, max 3) |
+| `dc send <channel> <content> [--reply MSG] [--file PATH …] [--sticker ID …] [--tts] [--silent] [--suppress-embeds] [--no-mentions] [--nonce N]` | Send a message; `--reply` makes it a reply; `--file` attaches files (repeatable, multipart); `--sticker` attaches stickers (repeatable, max 3); `--tts` text-to-speech; `--silent` no notification (flag 1<<12); `--suppress-embeds` hide unfurls (flag 1<<2); `--no-mentions` ping no one; `--nonce` idempotency key |
 | `dc edit <channel> <message> <content>` | Edit a message you authored |
 | `dc delete <channel> <message> [-y]` | Delete a message |
 | `dc react <channel> <message> <emoji> [--burst]` | Add a reaction (unicode `👍` or custom `name:id`); `--burst` = super/burst reaction |
@@ -117,24 +118,25 @@ Run `discord dc <group> --help` for each. All take raw snowflake IDs (validated 
 
 | Group | Subcommands |
 |---|---|
-| `dc thread` | `create <chan> <name> [--auto-archive 60\|1440\|4320\|10080]`, `create-from <chan> <msg> <name>`, `join <thread>`, `leave <thread>`, `add-member <thread> <user>`, `remove-member <thread> <user>`, `archive <thread> [--locked]`, `unarchive <thread>` |
+| `dc thread` | `create <chan> <name> [--auto-archive 60\|1440\|4320\|10080] [--type public\|private\|announcement]`, `forum-post <chan> <name> <message> [--auto-archive …] [--tag TAG_ID …]` (forum/media post with applied tags), `create-from <chan> <msg> <name>`, `join <thread>`, `leave <thread>`, `add-member <thread> <user>`, `remove-member <thread> <user>`, `archive <thread> [--locked]`, `unarchive <thread>` |
 | `dc channel` | `create <guild> <name> [--type N] [--topic] [--parent] [--nsfw] [--slowmode]`, `edit <chan> [--name/--topic/--nsfw/--slowmode/--bitrate/--position]`, `delete <chan> [-y] [--reason]`, `slowmode <chan> <seconds>` |
 | `dc perms` | `set <chan> <overwrite_id> [--type role\|member] [--allow BITS] [--deny BITS]`, `clear <chan> <overwrite_id>`, `list <chan>` |
-| `dc member` | `set-nick <guild> <user> <nick>`, `add-role <guild> <user> <role>`, `remove-role <guild> <user> <role>`, `timeout <guild> <user> <until_iso8601> [--reason]`, `untimeout <guild> <user> [--reason]`, `kick <guild> <user> [-y] [--reason]` |
-| `dc ban` | `add <guild> <user> [--delete-seconds N] [--reason] [-y]`, `remove <guild> <user> [--reason] [-y]`, `list <guild>`, `get <guild> <user>` |
+| `dc member` | `set-nick <guild> <user> <nick>`, `add-role <guild> <user> <role>`, `remove-role <guild> <user> <role>`, `timeout <guild> <user> <until_iso8601> [--reason]`, `untimeout <guild> <user> [--reason]`, `kick <guild> <user> [-y] [--reason]`, `search <guild> <query> [-n N=25]`, `prune-count <guild> [--days 7] [--include-roles ids]`, `prune <guild> [--days 7] [--include-roles ids] [--count] [--reason] [-y]` |
+| `dc ban` | `add <guild> <user> [--delete-seconds N] [--reason] [-y]`, `remove <guild> <user> [--reason] [-y]`, `list <guild>`, `get <guild> <user>`, `bulk <guild> <id,id,…> [--delete-seconds N] [--reason] [-y]` (≤200 users) |
 | `dc role` | `create <guild> [--name/--color/--hoist/--mentionable/--permissions]`, `edit <guild> <role> [...]`, `delete <guild> <role> [-y]`, `list <guild>` |
 | `dc invite` | `create <chan> [--max-age/--max-uses/--temporary/--unique]`, `delete <code>`, `list-channel <chan>`, `list-guild <guild>`, `get <code>` |
-| `dc friend` | `add <user>`, `request <username>`, `accept <user>`, `remove <user>`, `block <user>`, `unblock <user>` |
+| `dc friend` | `add <user>`, `request <username>`, `accept <user>`, `remove <user>`, `block <user>`, `unblock <user>`, `nickname <user> <nick>` (PATCH relationship; `""` clears) |
 | `dc emoji` | `create <guild> <name> <image_path>`, `rename <guild> <emoji_id> <name>`, `delete <guild> <emoji_id> [-y]` |
 | `dc sticker` | `create <guild> <name> <tags> <file_path> [--description]`, `edit <guild> <sticker_id> [...]`, `delete <guild> <sticker_id> [-y]` |
 | `dc message` | `bulk-delete <chan> <id,id,…> [-y]` (2–100), `crosspost <chan> <msg>`, `forward <src_chan> <msg> <dest_chan> [--content TEXT]` (message_reference type 1), `clear-reactions <chan> <msg> [-y]`, `clear-emoji <chan> <msg> <emoji> [-y]`, `remove-user-reaction <chan> <msg> <user> <emoji>`, `reactors <chan> <msg> <emoji> [-n N]` |
 | `dc guild` | `edit <guild> [--name/--description/--afk-channel/--afk-timeout]`, `set-nick <guild> <nick>`, `leave <guild> [-y]`, `vanity <guild>`, `widget-get <guild>`, `widget-edit <guild> [--enabled true\|false] [--channel ID]`, `welcome-get <guild>`, `welcome-edit <guild> [--enabled true\|false] [--description TEXT]`, `onboarding-get <guild>`, `integrations <guild>`, `integration-delete <guild> <integration_id> [-y]`, `templates <guild>`, `template-create <guild> <name> [--description TEXT]`, `template-sync <guild> <code>`, `template-delete <guild> <code> [-y]` |
 | `dc event` | `create <guild> <name> <start_iso> [--type voice\|stage\|external] [--channel/--location/--end-iso/--description]`, `edit <guild> <event_id> [...]`, `delete <guild> <event_id> [-y]` |
 | `dc webhook` | `create <chan> <name>`, `edit <webhook_id> [--name/--channel]`, `delete <webhook_id> [-y]`, `execute <webhook_id> <token> <content>`, `list-channel <chan>` |
-| `dc compose` | `embed <chan> [--content/--title/--description/--color/--url] [--file PATH …]`, `tts <chan> <content>`, `poll <chan> <question> <ans,ans,…> [--duration H] [--multiselect]`, `mark-read <chan> <msg>` |
+| `dc compose` | `embed <chan> [--content/--title/--description/--color/--url/--footer/--footer-icon/--author/--author-url/--author-icon/--image/--thumbnail/--timestamp] [--field "name\|value\|inline" …] [--file PATH …]`, `tts <chan> <content>`, `poll <chan> <question> <ans,ans,…> [--duration H] [--multiselect]`, `mark-read <chan> <msg>` |
 | `dc dm-group` | `create <user,user,…>` (2+ recipients), `add <chan> <user>`, `remove <chan> <user>`, `set-name <chan> <name>` |
-| `dc presence` | `set <online\|idle\|dnd\|invisible> [--activity TEXT] [--type playing\|streaming\|listening\|watching\|custom] [--url URL]` — connects the Gateway and **holds the connection open until Ctrl+C** (presence reverts on disconnect) |
-| `dc account` | `edit [--username/--bio/--pronouns/--accent-color/--avatar PATH/--banner PATH]` — edits your own profile (PATCH `/users/@me` + `/users/@me/profile`); at least one field required |
+| `dc presence` | `set <online\|idle\|dnd\|invisible> [--activity TEXT] [--type playing\|streaming\|listening\|watching\|competing\|custom] [--url URL] [--emoji 🎮\|name:id]` — connects the Gateway and **holds the connection open until Ctrl+C** (presence reverts on disconnect); `--emoji` applies to `--type custom` (live only, not persisted) |
+| `dc account` | `edit [--username/--global-name/--bio/--pronouns/--accent-color/--avatar PATH/--banner PATH]` — edits your own profile (PATCH `/users/@me` + `/users/@me/profile`; at least one field required); `connections` (list linked accounts), `connection-edit <type> <id> [--visible BOOL] [--show-activity BOOL]`, `connection-remove <type> <id>`, `note-get <user>`, `note-set <user> <note>` (`""` clears) |
+| `dc notify` | `guild <guild> [--muted BOOL] [--level all\|mentions\|nothing] [--suppress-everyone BOOL] [--suppress-roles BOOL]`, `channel <guild\|@me> <chan> [--muted BOOL] [--level …]`, `read-channel <chan> <msg>` (mark read up to message), `read-guild <guild>` (mark whole guild read) |
 | `dc automod` | `list <guild>`, `get <guild> <rule>`, `create <guild> <name> --event-type N --trigger-type N [--keyword w,w] [--preset N,N] [--mention-limit N] [--enabled true\|false] [--exempt-roles ids] [--exempt-channels ids]`, `edit <guild> <rule> [...]`, `delete <guild> <rule> [-y]` (trigger: 1=KEYWORD 3=SPAM 4=KEYWORD_PRESET 5=MENTION_SPAM; event: 1=MESSAGE_SEND; default action BLOCK_MESSAGE) |
 | `dc soundboard` | `list-default`, `list <guild>`, `get <guild> <sound>`, `create <guild> <name> <file> [--volume 0.0-1.0] [--emoji-id ID] [--emoji-name 😀]` (mp3/ogg ≤512 KB), `edit <guild> <sound> [...]`, `delete <guild> <sound> [-y]`, `send <channel> <sound> [--source-guild ID]` (plays into a voice channel you're connected to) |
 | `dc stage` | `start <channel> <topic> [--privacy 1\|2] [--send-start-notification]` (topic 1-120, privacy default 2=GUILD_ONLY), `get <channel>`, `edit <channel> [--topic/--privacy]`, `stop <channel> [-y]` |
@@ -188,6 +190,20 @@ discord dc presence set dnd --activity "shipping features" --type playing
 discord dc dm-group create 111,222,333
 discord dc automod create 111 "no-invites" --event-type 1 --trigger-type 1 --keyword "discord.gg,join my"
 discord dc stage start 999 "Town Hall" --send-start-notification
+discord dc ban bulk 111 222,333,444 --delete-seconds 3600 --reason "raid" -y
+discord dc member prune-count 111 --days 30
+discord dc compose embed 123 --title "Release" --color 65280 --field "Version|0.6.0|inline" --footer "ci"
+discord dc notify guild 111 --muted true --level mentions
+discord dc account note-set 222 "met at the meetup"
+discord dc presence set online --type custom --activity "focusing" --emoji 🎯
+```
+
+**Account / social housekeeping:**
+```bash
+discord dc dms                         # list open DMs / group DMs
+discord dc account connections         # list linked accounts (Steam, Spotify, …)
+discord dc friend nickname 222 "Bob"   # set a friend nickname
+discord dc notify read-guild 111       # mark a whole guild read
 ```
 
 **Live-monitor a channel:** `discord dc tail <channel_id> -n 50`
@@ -213,9 +229,9 @@ discord dc stage start 999 "Town Hall" --send-start-notification
 | Subcommand dispatch | `src/cli/commands/mod.rs` |
 | Read command impls | `src/cli/commands/dc_*.rs`, `*.rs` |
 | Flat write command impls | `src/cli/commands/dc_send.rs`, `dc_react.rs`, `dc_dm.rs`, `dc_voice_message.rs`, … |
-| Write command groups | `src/cli/commands/dcw_<domain>.rs` (e.g. `dcw_presence`, `dcw_dmgroup`, `dcw_account`, `dcw_automod`, `dcw_soundboard`, `dcw_stage`, `dcw_commands`) |
+| Write command groups | `src/cli/commands/dcw_<domain>.rs` (e.g. `dcw_presence`, `dcw_dmgroup`, `dcw_account`, `dcw_automod`, `dcw_soundboard`, `dcw_stage`, `dcw_commands`, `dcw_notify`) |
 | Read REST wrapper (`Api`/`ReadOnlyHttp`) | `src/cli/api.rs` |
-| Write REST wrapper (`WriteApi`/`WriteHttp`) | `src/cli/api.rs` + `src/cli/api_<domain>.rs` (incl. `api_account`, `api_automod`, `api_soundboard`, `api_stage`, `api_commands`) |
+| Write REST wrapper (`WriteApi`/`WriteHttp`) | `src/cli/api.rs` + `src/cli/api_<domain>.rs` (incl. `api_account`, `api_automod`, `api_soundboard`, `api_stage`, `api_commands`, `api_usersettings`) |
 | Multipart upload helpers (files / stickers / voice / soundboard / images) | `post_raw_multipart`, `post_message_with_files`, `send_message_with_files`, `send_voice_message`, `build_file_part`, `guess_mime` in `src/cli/api.rs` |
 | Generic endpoint escape hatch | `Route::Custom` in `src/route.rs` |
 | Token resolution + `.env` upsert | `src/cli/config.rs` |

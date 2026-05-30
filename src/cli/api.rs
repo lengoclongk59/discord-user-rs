@@ -109,6 +109,47 @@ fn build_file_part(
     Ok((meta, format!("files[{}]", index), part))
 }
 
+/// Optional send-time message options, mirroring the controls the official
+/// client exposes (TTS, silent/suppress-notifications, suppress-embeds,
+/// idempotency nonce, and disabling all mention pings).
+#[derive(Default, Clone, Debug)]
+pub struct MessageOptions {
+    pub tts: bool,
+    /// SUPPRESS_NOTIFICATIONS (1 << 12) — "silent" message.
+    pub silent: bool,
+    /// SUPPRESS_EMBEDS (1 << 2) — hide link/embed unfurls.
+    pub suppress_embeds: bool,
+    pub nonce: Option<String>,
+    /// Send `allowed_mentions: { parse: [] }` so the message pings no one.
+    pub suppress_mentions: bool,
+}
+
+impl MessageOptions {
+    /// Compute the message `flags` bitfield from the boolean options.
+    pub fn flags(&self) -> u64 {
+        let mut flags = 0u64;
+        if self.suppress_embeds {
+            flags |= 1 << 2;
+        }
+        if self.silent {
+            flags |= 1 << 12;
+        }
+        flags
+    }
+
+    /// Apply tts/flags/nonce/allowed_mentions to an already-built message body.
+    pub fn apply(&self, body: &mut serde_json::Value) {
+        body["tts"] = serde_json::json!(self.tts);
+        body["flags"] = serde_json::json!(self.flags());
+        if let Some(n) = &self.nonce {
+            body["nonce"] = serde_json::json!(n);
+        }
+        if self.suppress_mentions {
+            body["allowed_mentions"] = serde_json::json!({ "parse": [] });
+        }
+    }
+}
+
 /// Result of a paginated message fetch.
 ///
 /// `hit_limit` is true when the loop exited because `limit` was reached
@@ -361,6 +402,73 @@ impl Api {
         Ok(results)
     }
 
+    /// Remote guild search with the full filter set the official client
+    /// exposes: `content`, `author_id`, `mentions`, `has:` (link/embed/file/
+    /// image/video/sound), `channel_id`, `pinned`, and `before`/`after`
+    /// snowflake cursors. All are optional. Builds the query manually since the
+    /// typed `SearchGuildMessages` route only carries `content`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn search_guild_messages_advanced(
+        &self,
+        guild_id: &str,
+        content: Option<&str>,
+        channel_id: Option<&str>,
+        author_id: Option<&str>,
+        mentions: Option<&str>,
+        has: Option<&str>,
+        pinned: Option<bool>,
+        before: Option<&str>,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<StoredMessage>> {
+        let gid = parse_snowflake(guild_id)?;
+        let mut params: Vec<String> = Vec::new();
+        if let Some(c) = content {
+            params.push(format!("content={}", urlencoding::encode(c)));
+        }
+        if let Some(cid) = channel_id {
+            parse_snowflake(cid)?;
+            params.push(format!("channel_id={}", cid));
+        }
+        if let Some(a) = author_id {
+            parse_snowflake(a)?;
+            params.push(format!("author_id={}", a));
+        }
+        if let Some(m) = mentions {
+            parse_snowflake(m)?;
+            params.push(format!("mentions={}", m));
+        }
+        if let Some(h) = has {
+            params.push(format!("has={}", urlencoding::encode(h)));
+        }
+        if let Some(p) = pinned {
+            params.push(format!("pinned={}", p));
+        }
+        if let Some(b) = before {
+            parse_snowflake(b)?;
+            params.push(format!("max_id={}", b));
+        }
+        if let Some(a) = after {
+            parse_snowflake(a)?;
+            params.push(format!("min_id={}", a));
+        }
+        params.push(format!("limit={}", limit.min(25)));
+        let url = format!("guilds/{}/messages/search?{}", gid, params.join("&"));
+
+        let resp: SearchResponse = self
+            .http
+            .get::<SearchResponse>(Route::Custom(url.into()))
+            .await?;
+        let mut results = Vec::new();
+        for group in &resp.messages {
+            for raw in group {
+                let ch = raw.channel_id.as_deref().unwrap_or("");
+                results.push(StoredMessage::from_raw(raw, ch));
+            }
+        }
+        Ok(results)
+    }
+
     pub async fn get_pins(&self, channel_id: &str) -> Result<Vec<MessageRaw>> {
         let cid = parse_snowflake(channel_id)?;
         self.http
@@ -410,14 +518,29 @@ impl Api {
     }
 
     pub async fn get_guild_audit_logs(&self, guild_id: &str, limit: u8) -> Result<AuditLogResponse> {
+        self.get_guild_audit_logs_filtered(guild_id, limit, None, None, None, None)
+            .await
+    }
+
+    /// Audit log with optional `user_id`, `action_type`, and `before`/`after`
+    /// snowflake cursors. All filters map to documented query params.
+    pub async fn get_guild_audit_logs_filtered(
+        &self,
+        guild_id: &str,
+        limit: u8,
+        user_id: Option<&str>,
+        action_type: Option<u32>,
+        before: Option<&str>,
+        after: Option<&str>,
+    ) -> Result<AuditLogResponse> {
         let gid = parse_snowflake(guild_id)?;
         self.http
             .get::<AuditLogResponse>(Route::GetGuildAuditLogs {
                 guild_id: gid,
-                user_id: None,
-                action_type: None,
-                before: None,
-                after: None,
+                user_id: user_id.map(parse_snowflake).transpose()?,
+                action_type,
+                before: before.map(parse_snowflake).transpose()?,
+                after: after.map(parse_snowflake).transpose()?,
                 limit: Some(limit.min(100)),
             })
             .await
@@ -544,13 +667,11 @@ impl WriteApi {
         content: &str,
         reply_to: Option<&str>,
         sticker_ids: &[String],
+        opts: &MessageOptions,
     ) -> Result<MessageRaw> {
         let cid = parse_snowflake(channel_id)?;
-        let mut body = serde_json::json!({
-            "content": content,
-            "tts": false,
-            "flags": 0,
-        });
+        let mut body = serde_json::json!({ "content": content });
+        opts.apply(&mut body);
         // User-account tokens mimic the mobile client; bot endpoints reject
         // this field (HTTP 403 code 40333). Mirror the library's split.
         if !self.http.is_application_token() {
@@ -582,13 +703,11 @@ impl WriteApi {
         reply_to: Option<&str>,
         files: &[std::path::PathBuf],
         sticker_ids: &[String],
+        opts: &MessageOptions,
     ) -> Result<serde_json::Value> {
         parse_snowflake(channel_id)?;
-        let mut body = serde_json::json!({
-            "content": content,
-            "tts": false,
-            "flags": 0,
-        });
+        let mut body = serde_json::json!({ "content": content });
+        opts.apply(&mut body);
         if !self.is_app_token() {
             body["mobile_network_type"] = serde_json::json!("unknown");
         }
@@ -610,7 +729,7 @@ impl WriteApi {
         files: &[std::path::PathBuf],
     ) -> Result<serde_json::Value> {
         let dm = self.create_dm(recipient_id).await?;
-        self.send_message_with_files(&dm.id, content, None, files, &[])
+        self.send_message_with_files(&dm.id, content, None, files, &[], &MessageOptions::default())
             .await
     }
 
@@ -814,7 +933,8 @@ impl WriteApi {
     /// Open a DM with a user and send `content` to it. Returns the message.
     pub async fn send_dm(&self, recipient_id: &str, content: &str) -> Result<MessageRaw> {
         let dm = self.create_dm(recipient_id).await?;
-        self.send_message(&dm.id, content, None, &[]).await
+        self.send_message(&dm.id, content, None, &[], &MessageOptions::default())
+            .await
     }
 
     /// Raw HTTP handle for the per-domain write modules in `cli/api_*.rs`.

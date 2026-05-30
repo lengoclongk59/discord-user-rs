@@ -220,6 +220,70 @@ pub trait StatusOps: DiscordContext {
         self.set_custom_status(UserStatus::Online, None, None).await
     }
 
+    /// Set a custom status with text and/or an emoji, live over the gateway.
+    ///
+    /// Unlike [`set_custom_status`](StatusOps::set_custom_status) this does not
+    /// persist to the settings-proto (the proto layer does not model the custom
+    /// emoji); the status holds for as long as the gateway connection is open.
+    /// `emoji` is either a raw unicode emoji (e.g. `🎮`) or a custom emoji as
+    /// `name:id` (optionally `name:id:animated`).
+    ///
+    /// # Errors
+    /// Returns [`DiscordError::NotInitialized`] if the gateway is not connected.
+    async fn set_custom_status_with_emoji(
+        &self,
+        status: UserStatus,
+        text: Option<&str>,
+        emoji: Option<&str>,
+        expires_at_ms: Option<u64>,
+    ) -> Result<()> {
+        let mut activities = Vec::new();
+        if text.is_some() || emoji.is_some() {
+            let mut activity = json!({
+                "name": "Custom Status",
+                "type": 4,
+            });
+            if let Some(t) = text {
+                activity["state"] = json!(t);
+            }
+            activity["emoji"] = match emoji {
+                None => Value::Null,
+                Some(e) => {
+                    // `name:id[:animated]` → custom emoji object; otherwise a
+                    // unicode emoji carried in `name`.
+                    let parts: Vec<&str> = e.split(':').collect();
+                    if parts.len() >= 2 && parts[1].chars().all(|c| c.is_ascii_digit()) {
+                        let animated = parts.get(2).map(|a| *a == "1" || a.eq_ignore_ascii_case("true")).unwrap_or(false);
+                        json!({ "name": parts[0], "id": parts[1], "animated": animated })
+                    } else {
+                        json!({ "name": e })
+                    }
+                }
+            };
+            if let Some(expires) = expires_at_ms {
+                activity["timestamps"] = json!({ "end": expires });
+            }
+            activities.push(activity);
+        }
+
+        let ws_payload = json!({
+            "op": 3,
+            "d": {
+                "status": status.as_str(),
+                "since": 0,
+                "activities": activities,
+                "afk": false
+            }
+        });
+
+        if let Some(gateway) = self.gateway() {
+            gateway.send_raw(ws_payload).await?;
+        } else {
+            return Err(DiscordError::NotInitialized);
+        }
+        Ok(())
+    }
+
     /// Set a rich presence activity (Playing, Streaming, Listening, Watching,
     /// Competing).
     ///

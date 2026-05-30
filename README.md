@@ -19,7 +19,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-discord-user-rs = "0.1"
+discord-user-rs = "0.6"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -96,6 +96,9 @@ client.set_status(UserStatus::DoNotDisturb).await?;
 
 // Custom status text (persisted via protobuf settings API)
 client.set_custom_status(UserStatus::Online, Some("Working"), None).await?;
+
+// Custom status with an emoji, live over the gateway (unicode or `name:id`)
+client.set_custom_status_with_emoji(UserStatus::Online, Some("Working"), Some("🎮"), None).await?;
 
 // Clear custom status
 client.clear_custom_status().await?;

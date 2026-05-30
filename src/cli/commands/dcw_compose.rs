@@ -29,6 +29,33 @@ pub enum ComposeCmd {
         /// Embed URL (makes the title a hyperlink).
         #[arg(long)]
         url: Option<String>,
+        /// Footer text.
+        #[arg(long)]
+        footer: Option<String>,
+        /// Footer icon URL.
+        #[arg(long = "footer-icon")]
+        footer_icon: Option<String>,
+        /// Author name.
+        #[arg(long)]
+        author: Option<String>,
+        /// Author URL.
+        #[arg(long = "author-url")]
+        author_url: Option<String>,
+        /// Author icon URL.
+        #[arg(long = "author-icon")]
+        author_icon: Option<String>,
+        /// Large image URL.
+        #[arg(long)]
+        image: Option<String>,
+        /// Thumbnail image URL.
+        #[arg(long)]
+        thumbnail: Option<String>,
+        /// ISO-8601 timestamp shown in the footer (e.g. 2025-01-01T00:00:00Z).
+        #[arg(long)]
+        timestamp: Option<String>,
+        /// Add a field as `name|value` or `name|value|inline` (repeatable).
+        #[arg(long = "field", value_name = "NAME|VALUE[|inline]")]
+        fields: Vec<String>,
         /// Attach a file (repeatable: --file a.png --file b.pdf)
         #[arg(long = "file", value_name = "PATH")]
         files: Vec<std::path::PathBuf>,
@@ -76,18 +103,50 @@ pub async fn dispatch(ctx: &Ctx, cmd: ComposeCmd) -> Result<()> {
             description,
             color,
             url,
+            footer,
+            footer_icon,
+            author,
+            author_url,
+            author_icon,
+            image,
+            thumbnail,
+            timestamp,
+            fields,
             files,
         } => {
+            // Parse `name|value` or `name|value|inline` field specs.
+            let mut parsed_fields = Vec::with_capacity(fields.len());
+            for f in &fields {
+                let parts: Vec<&str> = f.splitn(3, '|').collect();
+                if parts.len() < 2 {
+                    return Err(anyhow::anyhow!(
+                        "invalid --field {:?}: expected 'name|value' or 'name|value|inline'",
+                        f
+                    ));
+                }
+                let inline = parts
+                    .get(2)
+                    .map(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "inline" | "true" | "1" | "yes"))
+                    .unwrap_or(false);
+                parsed_fields.push((parts[0].trim().to_string(), parts[1].trim().to_string(), inline));
+            }
+            let spec = crate::cli::api_compose::EmbedSpec {
+                title,
+                description,
+                color,
+                url,
+                footer,
+                footer_icon,
+                author,
+                author_url,
+                author_icon,
+                image,
+                thumbnail,
+                timestamp,
+                fields: parsed_fields,
+            };
             let result = api
-                .compose_embed(
-                    &channel,
-                    content.as_deref(),
-                    title.as_deref(),
-                    description.as_deref(),
-                    color,
-                    url.as_deref(),
-                    &files,
-                )
+                .compose_embed(&channel, content.as_deref(), &spec, &files)
                 .await?;
             if ctx.json {
                 output::print_json(&result);

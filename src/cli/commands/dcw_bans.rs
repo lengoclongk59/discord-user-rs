@@ -53,6 +53,22 @@ pub enum BanCmd {
         /// User ID (snowflake).
         user: String,
     },
+    /// Ban many users at once (up to 200) in a single request.
+    Bulk {
+        /// Guild ID (snowflake).
+        guild: String,
+        /// Comma-separated list of user IDs (e.g. `123,456,789`).
+        users: String,
+        /// Number of seconds of messages to delete (0–604800).
+        #[arg(long, default_value_t = 0)]
+        delete_seconds: u32,
+        /// Audit log reason.
+        #[arg(long)]
+        reason: Option<String>,
+        /// Skip confirmation prompt.
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
 }
 
 pub async fn dispatch(ctx: &Ctx, cmd: BanCmd) -> Result<()> {
@@ -136,6 +152,57 @@ pub async fn dispatch(ctx: &Ctx, cmd: BanCmd) -> Result<()> {
         BanCmd::Get { guild, user } => {
             let result = api.ban_get(&guild, &user).await?;
             output::print_json(&result);
+        }
+
+        BanCmd::Bulk {
+            guild,
+            users,
+            delete_seconds,
+            reason,
+            yes,
+        } => {
+            let user_ids: Vec<String> = users
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if user_ids.is_empty() {
+                output::warn("No user IDs provided.");
+                return Ok(());
+            }
+            if user_ids.len() > 200 {
+                return Err(anyhow::anyhow!(
+                    "bulk ban accepts at most 200 users (got {})",
+                    user_ids.len()
+                ));
+            }
+            if !yes {
+                print!(
+                    "Bulk-ban {} user(s) from guild {}? Type 'yes' to confirm: ",
+                    user_ids.len(),
+                    guild
+                );
+                io::stdout().flush()?;
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+                if input.trim() != "yes" {
+                    output::dim("Aborted.");
+                    return Ok(());
+                }
+            }
+            let result = api
+                .ban_bulk(&guild, &user_ids, delete_seconds, reason.as_deref())
+                .await?;
+            if ctx.json {
+                output::print_json(&result);
+            } else {
+                let banned = result["banned_users"].as_array().map(|a| a.len()).unwrap_or(0);
+                let failed = result["failed_users"].as_array().map(|a| a.len()).unwrap_or(0);
+                output::success(&format!(
+                    "Bulk ban in guild {}: {} banned, {} failed",
+                    guild, banned, failed
+                ));
+            }
         }
     }
 

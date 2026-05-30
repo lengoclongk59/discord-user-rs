@@ -29,6 +29,7 @@ pub mod api_soundboard;
 pub mod api_stage;
 pub mod api_stickers;
 pub mod api_threads;
+pub mod api_usersettings;
 pub mod api_webhooks;
 pub mod args;
 pub mod auth;

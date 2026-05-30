@@ -67,4 +67,32 @@ impl WriteApi {
             .await
             .map_err(|e| anyhow!(e.to_string()))
     }
+
+    /// POST guilds/{id}/bulk-ban — ban up to 200 users in a single request.
+    /// Returns `{ banned_users: [...], failed_users: [...] }`.
+    pub async fn ban_bulk(
+        &self,
+        guild_id: &str,
+        user_ids: &[String],
+        delete_seconds: u32,
+        reason: Option<&str>,
+    ) -> Result<Value> {
+        crate::cli::api::parse_snowflake(guild_id)?;
+        for id in user_ids {
+            crate::cli::api::parse_snowflake(id)?;
+        }
+        let body = json!({
+            "user_ids": user_ids,
+            "delete_message_seconds": delete_seconds,
+        });
+        self.raw()
+            .request_with_reason::<Value, _>(
+                Method::POST,
+                Route::Custom(format!("guilds/{}/bulk-ban", guild_id).into()),
+                Some(body),
+                reason,
+            )
+            .await
+            .map_err(|e| anyhow!(e.to_string()))
+    }
 }

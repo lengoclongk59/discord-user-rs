@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 
-use crate::cli::api::{parse_snowflake, WriteApi};
+use crate::cli::api::{parse_snowflake, MessageOptions, WriteApi};
 use crate::cli::commands::Ctx;
 use crate::cli::config;
 use crate::cli::output;
@@ -16,6 +16,7 @@ pub async fn run(
     reply: Option<&str>,
     files: &[PathBuf],
     stickers: &[String],
+    opts: MessageOptions,
 ) -> Result<()> {
     // Validate sticker constraints before making any network requests.
     if stickers.len() > 3 {
@@ -30,7 +31,7 @@ pub async fn run(
 
     if !files.is_empty() {
         let result = api
-            .send_message_with_files(channel, content, reply, files, stickers)
+            .send_message_with_files(channel, content, reply, files, stickers, &opts)
             .await?;
         if ctx.json {
             output::print_json(&result);
@@ -48,7 +49,7 @@ pub async fn run(
         return Ok(());
     }
 
-    let msg = api.send_message(channel, content, reply, stickers).await?;
+    let msg = api.send_message(channel, content, reply, stickers, &opts).await?;
 
     if ctx.json {
         output::print_json(&serde_json::json!({

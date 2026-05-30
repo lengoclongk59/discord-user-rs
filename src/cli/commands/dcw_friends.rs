@@ -45,6 +45,14 @@ pub enum FriendCmd {
         /// User ID (snowflake) to unblock
         user: String,
     },
+
+    /// Set (or clear) a friend nickname
+    Nickname {
+        /// User ID (snowflake) of the friend
+        user: String,
+        /// Nickname text (pass "" to clear)
+        nickname: String,
+    },
 }
 
 pub async fn dispatch(ctx: &Ctx, cmd: FriendCmd) -> Result<()> {
@@ -103,6 +111,17 @@ pub async fn dispatch(ctx: &Ctx, cmd: FriendCmd) -> Result<()> {
                 output::print_json(&serde_json::json!({ "unblocked": user }));
             } else {
                 output::success(&format!("Unblocked user {}", user));
+            }
+        }
+
+        FriendCmd::Nickname { user, nickname } => {
+            api.friend_set_nickname(&user, &nickname).await?;
+            if ctx.json {
+                output::print_json(&serde_json::json!({ "user_id": user, "nickname": nickname }));
+            } else if nickname.is_empty() {
+                output::success(&format!("Cleared nickname for user {}", user));
+            } else {
+                output::success(&format!("Set nickname for user {} to {:?}", user, nickname));
             }
         }
     }

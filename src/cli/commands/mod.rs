@@ -5,6 +5,7 @@ mod dc_audit;
 mod dc_channels;
 mod dc_delete;
 mod dc_dm;
+mod dc_dms;
 mod dc_download;
 mod dc_edit;
 mod dc_emojis;
@@ -45,6 +46,7 @@ pub(crate) mod dcw_guild;
 pub(crate) mod dcw_invites;
 pub(crate) mod dcw_members;
 pub(crate) mod dcw_msgops;
+pub(crate) mod dcw_notify;
 pub(crate) mod dcw_perms;
 pub(crate) mod dcw_presence;
 pub(crate) mod dcw_roles;
@@ -110,8 +112,29 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
             guild,
             keyword,
             channel,
+            author,
+            mentions,
+            has,
+            pinned,
+            before,
+            after,
             limit,
-        }) => dc_search_remote::run(&ctx, &guild, &keyword, channel.as_deref(), limit).await,
+        }) => {
+            dc_search_remote::run(
+                &ctx,
+                &guild,
+                &keyword,
+                channel.as_deref(),
+                author.as_deref(),
+                mentions.as_deref(),
+                has.as_deref(),
+                pinned,
+                before.as_deref(),
+                after.as_deref(),
+                limit,
+            )
+            .await
+        }
         Cmd::Dc(DcCmd::Members { guild, limit }) => dc_members::run(&ctx, &guild, limit).await,
         Cmd::Dc(DcCmd::Info { guild }) => dc_info::run(&ctx, &guild).await,
         Cmd::Dc(DcCmd::Pins { channel }) => dc_pins::run(&ctx, &channel).await,
@@ -121,7 +144,25 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Cmd::Dc(DcCmd::Emojis { guild }) => dc_emojis::run(&ctx, &guild).await,
         Cmd::Dc(DcCmd::Profile { user_id }) => dc_profile::run(&ctx, user_id.as_deref()).await,
         Cmd::Dc(DcCmd::Stickers { guild }) => dc_stickers::run(&ctx, &guild).await,
-        Cmd::Dc(DcCmd::Audit { guild, limit }) => dc_audit::run(&ctx, &guild, limit).await,
+        Cmd::Dc(DcCmd::Audit {
+            guild,
+            limit,
+            user,
+            action_type,
+            before,
+            after,
+        }) => {
+            dc_audit::run(
+                &ctx,
+                &guild,
+                limit,
+                user.as_deref(),
+                action_type,
+                before.as_deref(),
+                after.as_deref(),
+            )
+            .await
+        }
         Cmd::Dc(DcCmd::Events { guild }) => dc_events::run(&ctx, &guild).await,
         Cmd::Dc(DcCmd::Download { channel, output, hours }) => dc_download::run(&ctx, &channel, &output, hours).await,
         Cmd::Dc(DcCmd::Snapshot { guild, output }) => dc_snapshot::run(&ctx, &guild, output).await,
@@ -131,7 +172,21 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
             reply,
             files,
             stickers,
-        }) => dc_send::run(&ctx, &channel, &content, reply.as_deref(), &files, &stickers).await,
+            tts,
+            silent,
+            suppress_embeds,
+            no_mentions,
+            nonce,
+        }) => {
+            let opts = crate::cli::api::MessageOptions {
+                tts,
+                silent,
+                suppress_embeds,
+                nonce,
+                suppress_mentions: no_mentions,
+            };
+            dc_send::run(&ctx, &channel, &content, reply.as_deref(), &files, &stickers, opts).await
+        }
         Cmd::Dc(DcCmd::Edit {
             channel,
             message,
@@ -193,6 +248,8 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Cmd::Dc(DcCmd::Automod(c)) => dcw_automod::dispatch(&ctx, c).await,
         Cmd::Dc(DcCmd::Soundboard(c)) => dcw_soundboard::dispatch(&ctx, c).await,
         Cmd::Dc(DcCmd::Command(c)) => dcw_commands::dispatch(&ctx, c).await,
+        Cmd::Dc(DcCmd::Notify(c)) => dcw_notify::dispatch(&ctx, c).await,
+        Cmd::Dc(DcCmd::Dms) => dc_dms::run(&ctx).await,
         Cmd::Search(args) => search::run(&ctx, args),
         Cmd::Recent(args) => recent::run(&ctx, args),
         Cmd::Stats => stats::run(&ctx),

@@ -20,6 +20,9 @@ pub enum AccountCmd {
         /// New username.
         #[arg(long)]
         username: Option<String>,
+        /// New global display name (the non-unique name shown in chat).
+        #[arg(long = "global-name")]
+        global_name: Option<String>,
         /// New "about me" bio.
         #[arg(long)]
         bio: Option<String>,
@@ -36,12 +39,47 @@ pub enum AccountCmd {
         #[arg(long, value_name = "PATH")]
         banner: Option<String>,
     },
+    /// List your third-party linked accounts (Steam, Spotify, …).
+    Connections,
+    /// Edit a connection's visibility / activity sharing.
+    ConnectionEdit {
+        /// Connection type (e.g. steam, spotify, github).
+        conn_type: String,
+        /// Connection account ID.
+        conn_id: String,
+        /// Show this connection on your profile.
+        #[arg(long)]
+        visible: Option<bool>,
+        /// Share this connection's activity as rich presence.
+        #[arg(long = "show-activity")]
+        show_activity: Option<bool>,
+    },
+    /// Remove a third-party linked account.
+    ConnectionRemove {
+        /// Connection type (e.g. steam, spotify, github).
+        conn_type: String,
+        /// Connection account ID.
+        conn_id: String,
+    },
+    /// Get your private note on a user.
+    NoteGet {
+        /// User ID (snowflake).
+        user: String,
+    },
+    /// Set (or clear, with empty string) your private note on a user.
+    NoteSet {
+        /// User ID (snowflake).
+        user: String,
+        /// Note text (pass "" to clear).
+        note: String,
+    },
 }
 
 pub async fn dispatch(ctx: &Ctx, cmd: AccountCmd) -> Result<()> {
     match cmd {
         AccountCmd::Edit {
             username,
+            global_name,
             bio,
             pronouns,
             accent_color,
@@ -50,6 +88,7 @@ pub async fn dispatch(ctx: &Ctx, cmd: AccountCmd) -> Result<()> {
         } => {
             // Fail fast if nothing was supplied.
             if username.is_none()
+                && global_name.is_none()
                 && bio.is_none()
                 && pronouns.is_none()
                 && accent_color.is_none()
@@ -57,7 +96,7 @@ pub async fn dispatch(ctx: &Ctx, cmd: AccountCmd) -> Result<()> {
                 && banner.is_none()
             {
                 return Err(anyhow!(
-                    "nothing to edit: pass at least one of --username, --bio, --pronouns, --accent-color, --avatar, --banner"
+                    "nothing to edit: pass at least one of --username, --global-name, --bio, --pronouns, --accent-color, --avatar, --banner"
                 ));
             }
 
@@ -76,6 +115,7 @@ pub async fn dispatch(ctx: &Ctx, cmd: AccountCmd) -> Result<()> {
             let account = api
                 .edit_account(
                     username.as_deref(),
+                    global_name.as_deref(),
                     avatar.as_deref(),
                     banner.as_deref(),
                     accent_color,
@@ -95,6 +135,9 @@ pub async fn dispatch(ctx: &Ctx, cmd: AccountCmd) -> Result<()> {
                 if username.is_some() {
                     changed.push("username");
                 }
+                if global_name.is_some() {
+                    changed.push("global_name");
+                }
                 if avatar.is_some() {
                     changed.push("avatar");
                 }
@@ -111,6 +154,92 @@ pub async fn dispatch(ctx: &Ctx, cmd: AccountCmd) -> Result<()> {
                     changed.push("pronouns");
                 }
                 output::success(&format!("Updated profile: {}", changed.join(", ")));
+            }
+        }
+
+        AccountCmd::Connections => {
+            let token = config::resolve_token(ctx.token_flag.clone())?;
+            let api = WriteApi::new(&token);
+            let result = api.get_connections().await?;
+            if ctx.json {
+                output::print_json(&result);
+            } else if let Some(arr) = result.as_array() {
+                if arr.is_empty() {
+                    output::dim("No linked accounts.");
+                } else {
+                    let rows: Vec<Vec<String>> = arr
+                        .iter()
+                        .map(|c| {
+                            vec![
+                                c["type"].as_str().unwrap_or("").to_string(),
+                                c["name"].as_str().unwrap_or("").to_string(),
+                                c["id"].as_str().unwrap_or("").to_string(),
+                                c["verified"].as_bool().unwrap_or(false).to_string(),
+                            ]
+                        })
+                        .collect();
+                    output::print_table(&["type", "name", "id", "verified"], &rows);
+                }
+            } else {
+                output::print_json(&result);
+            }
+        }
+
+        AccountCmd::ConnectionEdit {
+            conn_type,
+            conn_id,
+            visible,
+            show_activity,
+        } => {
+            let token = config::resolve_token(ctx.token_flag.clone())?;
+            let api = WriteApi::new(&token);
+            let result = api
+                .edit_connection(&conn_type, &conn_id, visible, show_activity)
+                .await?;
+            if ctx.json {
+                output::print_json(&result);
+            } else {
+                output::success(&format!("Updated connection {}/{}", conn_type, conn_id));
+            }
+        }
+
+        AccountCmd::ConnectionRemove { conn_type, conn_id } => {
+            let token = config::resolve_token(ctx.token_flag.clone())?;
+            let api = WriteApi::new(&token);
+            api.delete_connection(&conn_type, &conn_id).await?;
+            if ctx.json {
+                output::print_json(&serde_json::json!({ "removed": format!("{}/{}", conn_type, conn_id) }));
+            } else {
+                output::success(&format!("Removed connection {}/{}", conn_type, conn_id));
+            }
+        }
+
+        AccountCmd::NoteGet { user } => {
+            let token = config::resolve_token(ctx.token_flag.clone())?;
+            let api = WriteApi::new(&token);
+            let result = api.get_note(&user).await?;
+            if ctx.json {
+                output::print_json(&result);
+            } else {
+                let note = result["note"].as_str().unwrap_or("");
+                if note.is_empty() {
+                    output::dim(&format!("No note on user {}", user));
+                } else {
+                    println!("{}", note);
+                }
+            }
+        }
+
+        AccountCmd::NoteSet { user, note } => {
+            let token = config::resolve_token(ctx.token_flag.clone())?;
+            let api = WriteApi::new(&token);
+            api.set_note(&user, &note).await?;
+            if ctx.json {
+                output::print_json(&serde_json::json!({ "user_id": user, "note": note }));
+            } else if note.is_empty() {
+                output::success(&format!("Cleared note on user {}", user));
+            } else {
+                output::success(&format!("Set note on user {}", user));
             }
         }
     }

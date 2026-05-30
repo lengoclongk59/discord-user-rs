@@ -123,11 +123,30 @@ pub enum DcCmd {
     SearchRemote {
         /// Guild ID or partial guild name
         guild: String,
-        /// Search keyword
+        /// Search keyword (optional when filtering by author/mentions/has)
+        #[arg(default_value = "")]
         keyword: String,
         /// Filter by channel ID
         #[arg(short = 'c', long)]
         channel: Option<String>,
+        /// Filter by author user ID
+        #[arg(long)]
+        author: Option<String>,
+        /// Only messages mentioning this user ID
+        #[arg(long)]
+        mentions: Option<String>,
+        /// Only messages containing: link | embed | file | image | video | sound
+        #[arg(long)]
+        has: Option<String>,
+        /// Only pinned messages
+        #[arg(long)]
+        pinned: bool,
+        /// Only messages before this message ID
+        #[arg(long)]
+        before: Option<String>,
+        /// Only messages after this message ID
+        #[arg(long)]
+        after: Option<String>,
         /// Maximum results
         #[arg(short = 'n', long, default_value_t = 25)]
         limit: u32,
@@ -184,6 +203,18 @@ pub enum DcCmd {
         /// Maximum entries
         #[arg(short = 'n', long, default_value_t = 50)]
         limit: u8,
+        /// Filter by the user (moderator) who performed the action
+        #[arg(long)]
+        user: Option<String>,
+        /// Filter by audit log action type (numeric, e.g. 22 = MEMBER_BAN_ADD)
+        #[arg(long = "action-type")]
+        action_type: Option<u32>,
+        /// Only entries before this audit log entry ID
+        #[arg(long)]
+        before: Option<String>,
+        /// Only entries after this audit log entry ID
+        #[arg(long)]
+        after: Option<String>,
     },
     /// List scheduled events in a guild
     Events {
@@ -226,6 +257,21 @@ pub enum DcCmd {
         /// Attach a sticker by ID (repeatable: --sticker ID, max 3)
         #[arg(long = "sticker", value_name = "STICKER_ID")]
         stickers: Vec<String>,
+        /// Send as a text-to-speech message
+        #[arg(long)]
+        tts: bool,
+        /// Send silently (no push/desktop notification)
+        #[arg(long)]
+        silent: bool,
+        /// Suppress link/embed unfurls on this message
+        #[arg(long = "suppress-embeds")]
+        suppress_embeds: bool,
+        /// Don't ping anyone, even if the content @-mentions users/roles
+        #[arg(long = "no-mentions")]
+        no_mentions: bool,
+        /// Idempotency nonce (used by Discord to de-duplicate sends)
+        #[arg(long)]
+        nonce: Option<String>,
     },
     /// Edit a message you authored
     Edit {
@@ -380,6 +426,11 @@ pub enum DcCmd {
     /// Application (slash) commands (list, get, create, delete)
     #[command(subcommand, name = "command")]
     Command(crate::cli::commands::dcw_commands::AppCommandCmd),
+    /// Notification settings & read-state (mute, level, mark-read)
+    #[command(subcommand)]
+    Notify(crate::cli::commands::dcw_notify::NotifyCmd),
+    /// List your open DM and group-DM channels
+    Dms,
 }
 
 #[derive(Args, Debug)]

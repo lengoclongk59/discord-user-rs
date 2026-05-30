@@ -10,7 +10,7 @@ use crate::cli::output;
 
 #[derive(Subcommand, Debug)]
 pub enum ThreadCmd {
-    /// Create a standalone thread in a channel (type 11 PUBLIC_THREAD)
+    /// Create a standalone thread in a channel
     Create {
         /// Channel ID to create the thread in
         channel: String,
@@ -19,6 +19,25 @@ pub enum ThreadCmd {
         /// Auto-archive duration in minutes (60, 1440, 4320, 10080)
         #[arg(long, default_value_t = 1440)]
         auto_archive: u32,
+        /// Thread type: public | private | announcement
+        #[arg(long = "type", default_value = "public")]
+        thread_type: String,
+    },
+
+    /// Create a forum/media post (a thread with an initial message)
+    ForumPost {
+        /// Forum/media channel ID
+        channel: String,
+        /// Post title (thread name)
+        name: String,
+        /// Initial message content
+        message: String,
+        /// Auto-archive duration in minutes (60, 1440, 4320, 10080)
+        #[arg(long, default_value_t = 1440)]
+        auto_archive: u32,
+        /// Apply a forum tag by ID (repeatable: --tag ID --tag ID)
+        #[arg(long = "tag", value_name = "TAG_ID")]
+        tags: Vec<String>,
     },
 
     /// Create a thread from an existing message
@@ -87,19 +106,55 @@ pub async fn dispatch(ctx: &Ctx, cmd: ThreadCmd) -> Result<()> {
             channel,
             name,
             auto_archive,
+            thread_type,
         } => {
             if ![60, 1440, 4320, 10080].contains(&auto_archive) {
                 return Err(anyhow::anyhow!("--auto-archive must be one of 60, 1440, 4320, 10080 (minutes); got {}", auto_archive));
             }
+            let type_id = match thread_type.to_ascii_lowercase().as_str() {
+                "public" => 11,
+                "private" => 12,
+                "announcement" | "news" => 10,
+                other => {
+                    return Err(anyhow::anyhow!(
+                        "invalid --type {:?}; expected one of: public, private, announcement",
+                        other
+                    ))
+                }
+            };
             let v = api
-                .thread_create_standalone(&channel, &name, auto_archive)
+                .thread_create_standalone(&channel, &name, auto_archive, type_id)
                 .await?;
             if ctx.json {
                 output::print_json(&v);
             } else {
                 let id = v["id"].as_str().unwrap_or("?");
                 output::success(&format!(
-                    "Created thread '{}' (id {}) in channel {}",
+                    "Created {} thread '{}' (id {}) in channel {}",
+                    thread_type, name, id, channel
+                ));
+            }
+        }
+
+        ThreadCmd::ForumPost {
+            channel,
+            name,
+            message,
+            auto_archive,
+            tags,
+        } => {
+            if ![60, 1440, 4320, 10080].contains(&auto_archive) {
+                return Err(anyhow::anyhow!("--auto-archive must be one of 60, 1440, 4320, 10080 (minutes); got {}", auto_archive));
+            }
+            let v = api
+                .thread_create_forum_post(&channel, &name, &message, auto_archive, &tags)
+                .await?;
+            if ctx.json {
+                output::print_json(&v);
+            } else {
+                let id = v["id"].as_str().unwrap_or("?");
+                output::success(&format!(
+                    "Created forum post '{}' (id {}) in channel {}",
                     name, id, channel
                 ));
             }

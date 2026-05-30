@@ -7,12 +7,23 @@ use crate::cli::commands::Ctx;
 use crate::cli::config;
 use crate::cli::output;
 
-pub async fn run(ctx: &Ctx, guild: &str, limit: u8) -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+pub async fn run(
+    ctx: &Ctx,
+    guild: &str,
+    limit: u8,
+    user: Option<&str>,
+    action_type: Option<u32>,
+    before: Option<&str>,
+    after: Option<&str>,
+) -> Result<()> {
     let token = config::resolve_token(ctx.token_flag.clone())?;
     let api = Api::new(&token);
 
     let guild_id = api.resolve_guild_id(guild).await?;
-    let resp = api.get_guild_audit_logs(&guild_id, limit).await?;
+    let resp = api
+        .get_guild_audit_logs_filtered(&guild_id, limit, user, action_type, before, after)
+        .await?;
 
     if resp.audit_log_entries.is_empty() {
         output::dim("No audit log entries.");

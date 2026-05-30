@@ -7,21 +7,54 @@ use crate::cli::api::WriteApi;
 use crate::route::Route;
 
 impl WriteApi {
-    /// POST /channels/{channel_id}/threads — create a standalone thread (type 11 = PUBLIC_THREAD).
+    /// POST /channels/{channel_id}/threads — create a standalone thread.
+    /// `thread_type` is 10 (ANNOUNCEMENT_THREAD), 11 (PUBLIC_THREAD), or
+    /// 12 (PRIVATE_THREAD).
     pub async fn thread_create_standalone(
         &self,
         channel_id: &str,
         name: &str,
         auto_archive: u32,
+        thread_type: u8,
     ) -> Result<Value> {
         let cid: u64 = channel_id
             .parse()
             .map_err(|_| anyhow!("invalid channel id: {}", channel_id))?;
         let body = json!({
             "name": name,
-            "type": 11,
+            "type": thread_type,
             "auto_archive_duration": auto_archive,
         });
+        self.raw()
+            .post::<Value, _>(Route::CreateThread { channel_id: cid }, body)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))
+    }
+
+    /// POST /channels/{channel_id}/threads — create a forum/media post (a thread
+    /// carrying an initial message). `applied_tags` are forum tag IDs.
+    pub async fn thread_create_forum_post(
+        &self,
+        channel_id: &str,
+        name: &str,
+        message: &str,
+        auto_archive: u32,
+        applied_tags: &[String],
+    ) -> Result<Value> {
+        let cid: u64 = channel_id
+            .parse()
+            .map_err(|_| anyhow!("invalid channel id: {}", channel_id))?;
+        for t in applied_tags {
+            crate::cli::api::parse_snowflake(t)?;
+        }
+        let mut body = json!({
+            "name": name,
+            "auto_archive_duration": auto_archive,
+            "message": { "content": message },
+        });
+        if !applied_tags.is_empty() {
+            body["applied_tags"] = json!(applied_tags);
+        }
         self.raw()
             .post::<Value, _>(Route::CreateThread { channel_id: cid }, body)
             .await
