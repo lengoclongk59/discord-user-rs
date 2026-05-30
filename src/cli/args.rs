@@ -220,6 +220,12 @@ pub enum DcCmd {
         /// Reply to a message ID (sets message_reference)
         #[arg(long)]
         reply: Option<String>,
+        /// Attach a file (repeatable: --file a.png --file b.pdf)
+        #[arg(long = "file", value_name = "PATH")]
+        files: Vec<PathBuf>,
+        /// Attach a sticker by ID (repeatable: --sticker ID, max 3)
+        #[arg(long = "sticker", value_name = "STICKER_ID")]
+        stickers: Vec<String>,
     },
     /// Edit a message you authored
     Edit {
@@ -248,6 +254,9 @@ pub enum DcCmd {
         message: String,
         /// Emoji: unicode (👍) or custom `name:id`
         emoji: String,
+        /// Send as a super (burst) reaction
+        #[arg(long)]
+        burst: bool,
     },
     /// Remove your own reaction from a message
     Unreact {
@@ -283,6 +292,25 @@ pub enum DcCmd {
         user_id: String,
         /// Message content
         content: String,
+        /// Attach a file (repeatable: --file a.png --file b.pdf)
+        #[arg(long = "file", value_name = "PATH")]
+        files: Vec<PathBuf>,
+    },
+    /// Send a voice message (audio attachment flagged as a voice message)
+    #[command(name = "voice-message")]
+    VoiceMessage {
+        /// Channel ID
+        channel: String,
+        /// Audio file to send
+        file: PathBuf,
+        /// Duration in seconds. True duration probing is out of scope; this
+        /// value is sent as-is and defaults to 1.0 when omitted.
+        #[arg(long, value_name = "SECS")]
+        duration: Option<f64>,
+        /// Base64-encoded waveform bytes. When omitted, a short placeholder
+        /// waveform is generated and base64-encoded.
+        #[arg(long, value_name = "BASE64")]
+        waveform: Option<String>,
     },
 
     // ---- Nested write/client command groups (multi-agent buildout) ----
@@ -325,12 +353,33 @@ pub enum DcCmd {
     /// Scheduled events (create, edit, delete)
     #[command(subcommand)]
     Event(crate::cli::commands::dcw_events::EventCmd),
+    /// Stage instances (start, get, edit, stop)
+    #[command(subcommand)]
+    Stage(crate::cli::commands::dcw_stage::StageCmd),
     /// Webhooks (create, edit, delete, execute, list)
     #[command(subcommand)]
     Webhook(crate::cli::commands::dcw_webhooks::WebhookCmd),
     /// Rich message composition (embed, tts, poll, mark-read)
     #[command(subcommand)]
     Compose(crate::cli::commands::dcw_compose::ComposeCmd),
+    /// Presence / status (set online status & custom activity)
+    #[command(subcommand)]
+    Presence(crate::cli::commands::dcw_presence::PresenceCmd),
+    /// Group DM management (create, add, remove, set-name)
+    #[command(subcommand, name = "dm-group")]
+    DmGroup(crate::cli::commands::dcw_dmgroup::DmGroupCmd),
+    /// Edit your own account/profile (username, bio, pronouns, avatar, banner)
+    #[command(subcommand)]
+    Account(crate::cli::commands::dcw_account::AccountCmd),
+    /// Auto-moderation rules (list, get, create, edit, delete)
+    #[command(subcommand)]
+    Automod(crate::cli::commands::dcw_automod::AutomodCmd),
+    /// Soundboard sounds (list, get, create, edit, delete, send)
+    #[command(subcommand)]
+    Soundboard(crate::cli::commands::dcw_soundboard::SoundboardCmd),
+    /// Application (slash) commands (list, get, create, delete)
+    #[command(subcommand, name = "command")]
+    Command(crate::cli::commands::dcw_commands::AppCommandCmd),
 }
 
 #[derive(Args, Debug)]

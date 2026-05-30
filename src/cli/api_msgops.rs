@@ -114,4 +114,36 @@ impl WriteApi {
             .await
             .map_err(|e| anyhow!(e.to_string()))
     }
+
+    /// POST /channels/{dest_channel}/messages — forward a message via message_reference type 1.
+    pub async fn msg_forward(
+        &self,
+        source_channel_id: &str,
+        message_id: &str,
+        dest_channel_id: &str,
+        content: Option<&str>,
+    ) -> Result<Value> {
+        crate::cli::api::parse_snowflake(source_channel_id)?;
+        crate::cli::api::parse_snowflake(message_id)?;
+        crate::cli::api::parse_snowflake(dest_channel_id)?;
+        let mut body = json!({
+            "message_reference": {
+                "type": 1,
+                "channel_id": source_channel_id,
+                "message_id": message_id,
+            }
+        });
+        if let Some(text) = content {
+            if !text.is_empty() {
+                body["content"] = json!(text);
+            }
+        }
+        self.raw()
+            .post::<Value, _>(
+                Route::Custom(format!("channels/{}/messages", dest_channel_id).into()),
+                body,
+            )
+            .await
+            .map_err(|e| anyhow!(e.to_string()))
+    }
 }

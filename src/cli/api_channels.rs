@@ -86,4 +86,54 @@ impl WriteApi {
             .await
             .map_err(|e| anyhow!(e.to_string()))
     }
+
+    /// Create a group DM with the listed recipient user IDs. Returns the
+    /// created channel object. Requires at least 2 recipients.
+    pub async fn create_group_dm(&self, recipient_ids: &[String]) -> Result<Value> {
+        for id in recipient_ids {
+            crate::cli::api::parse_snowflake(id)?;
+        }
+        let body = json!({ "recipients": recipient_ids });
+        self.raw()
+            .post::<Value, _>(Route::Custom("users/@me/channels".into()), body)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))
+    }
+
+    /// Add a recipient to a group DM.
+    pub async fn group_dm_add_recipient(&self, channel_id: &str, user_id: &str) -> Result<()> {
+        crate::cli::api::parse_snowflake(channel_id)?;
+        crate::cli::api::parse_snowflake(user_id)?;
+        self.raw()
+            .put_empty(Route::Custom(
+                format!("channels/{}/recipients/{}", channel_id, user_id).into(),
+            ))
+            .await
+            .map_err(|e| anyhow!(e.to_string()))
+    }
+
+    /// Remove a recipient from a group DM.
+    pub async fn group_dm_remove_recipient(&self, channel_id: &str, user_id: &str) -> Result<()> {
+        crate::cli::api::parse_snowflake(channel_id)?;
+        crate::cli::api::parse_snowflake(user_id)?;
+        self.raw()
+            .delete(Route::Custom(
+                format!("channels/{}/recipients/{}", channel_id, user_id).into(),
+            ))
+            .await
+            .map_err(|e| anyhow!(e.to_string()))
+    }
+
+    /// Rename a group DM. Returns the updated channel object.
+    pub async fn group_dm_set_name(&self, channel_id: &str, name: &str) -> Result<Value> {
+        crate::cli::api::parse_snowflake(channel_id)?;
+        let body = json!({ "name": name });
+        self.raw()
+            .patch::<Value, _>(
+                Route::Custom(format!("channels/{}", channel_id).into()),
+                body,
+            )
+            .await
+            .map_err(|e| anyhow!(e.to_string()))
+    }
 }

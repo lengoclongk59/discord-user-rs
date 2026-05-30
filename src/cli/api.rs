@@ -55,6 +55,60 @@ pub fn parse_snowflake(s: &str) -> Result<u64> {
         .with_context(|| format!("invalid snowflake id: {:?}", s))
 }
 
+/// Best-effort MIME type from a file extension, used when attaching files to
+/// outgoing messages. Falls back to `application/octet-stream` for anything
+/// unrecognized (Discord still accepts the upload).
+fn guess_mime(path: &std::path::Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("apng") => "image/apng",
+        Some("bmp") => "image/bmp",
+        Some("svg") => "image/svg+xml",
+        Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("mov") => "video/quicktime",
+        Some("mp3") => "audio/mpeg",
+        Some("ogg") => "audio/ogg",
+        Some("wav") => "audio/wav",
+        Some("pdf") => "application/pdf",
+        Some("json") => "application/json",
+        Some("txt") | Some("log") => "text/plain",
+        Some("csv") => "text/csv",
+        Some("zip") => "application/zip",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Read a file and build its `attachments[]` metadata entry plus the matching
+/// `files[i]` multipart part. Returns `(metadata, part_name, part)`. Validates
+/// the file exists/readable and has a usable filename, failing fast otherwise.
+fn build_file_part(
+    index: usize,
+    path: &std::path::Path,
+) -> Result<(serde_json::Value, String, reqwest::multipart::Part)> {
+    let bytes =
+        std::fs::read(path).with_context(|| format!("reading attachment {}", path.display()))?;
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| anyhow!("invalid attachment filename: {}", path.display()))?
+        .to_string();
+    let meta = serde_json::json!({ "id": index, "filename": filename });
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name(filename)
+        .mime_str(guess_mime(path))
+        .map_err(|e| anyhow!(e.to_string()))?;
+    Ok((meta, format!("files[{}]", index), part))
+}
+
 /// Result of a paginated message fetch.
 ///
 /// `hit_limit` is true when the loop exited because `limit` was reached
@@ -481,12 +535,15 @@ impl WriteApi {
     }
 
     /// Send a message to a channel. `reply_to`, when set, makes this a reply
-    /// (Discord `message_reference`). Returns the created message.
+    /// (Discord `message_reference`). `sticker_ids`, when non-empty, attaches
+    /// up to 3 stickers (caller must pre-validate count and snowflakes).
+    /// Returns the created message.
     pub async fn send_message(
         &self,
         channel_id: &str,
         content: &str,
         reply_to: Option<&str>,
+        sticker_ids: &[String],
     ) -> Result<MessageRaw> {
         let cid = parse_snowflake(channel_id)?;
         let mut body = serde_json::json!({
@@ -503,9 +560,130 @@ impl WriteApi {
             parse_snowflake(mid)?; // validate
             body["message_reference"] = serde_json::json!({ "message_id": mid });
         }
+        if !sticker_ids.is_empty() {
+            body["sticker_ids"] = serde_json::json!(sticker_ids);
+        }
         self.http
             .post::<MessageRaw>(Route::CreateMessage { channel_id: cid }, body)
             .await
+    }
+
+    /// Send a message to a channel with one or more file attachments.
+    ///
+    /// Builds a `multipart/form-data` body: a `payload_json` part holding the
+    /// message JSON (including an `attachments` array referencing each file by
+    /// index + filename) plus `files[i]` parts carrying the raw bytes. Mirrors
+    /// the user-token `mobile_network_type` handling of [`send_message`].
+    /// `sticker_ids`, when non-empty, are included in the payload_json.
+    pub async fn send_message_with_files(
+        &self,
+        channel_id: &str,
+        content: &str,
+        reply_to: Option<&str>,
+        files: &[std::path::PathBuf],
+        sticker_ids: &[String],
+    ) -> Result<serde_json::Value> {
+        parse_snowflake(channel_id)?;
+        let mut body = serde_json::json!({
+            "content": content,
+            "tts": false,
+            "flags": 0,
+        });
+        if !self.is_app_token() {
+            body["mobile_network_type"] = serde_json::json!("unknown");
+        }
+        if let Some(mid) = reply_to {
+            parse_snowflake(mid)?; // validate
+            body["message_reference"] = serde_json::json!({ "message_id": mid });
+        }
+        if !sticker_ids.is_empty() {
+            body["sticker_ids"] = serde_json::json!(sticker_ids);
+        }
+        self.post_message_with_files(channel_id, body, files).await
+    }
+
+    /// Open a DM with a user and send `content` plus file attachments to it.
+    pub async fn send_dm_with_files(
+        &self,
+        recipient_id: &str,
+        content: &str,
+        files: &[std::path::PathBuf],
+    ) -> Result<serde_json::Value> {
+        let dm = self.create_dm(recipient_id).await?;
+        self.send_message_with_files(&dm.id, content, None, files, &[])
+            .await
+    }
+
+    /// Build a `channels/{id}/messages` multipart request from an already-built
+    /// message `body` and a list of files, injecting the `attachments` array.
+    ///
+    /// Shared by the file-aware send/DM/embed paths. Validates that every file
+    /// exists and is readable, failing fast with a clear error otherwise.
+    pub(crate) async fn post_message_with_files(
+        &self,
+        channel_id: &str,
+        mut body: serde_json::Value,
+        files: &[std::path::PathBuf],
+    ) -> Result<serde_json::Value> {
+        let mut attachments = Vec::with_capacity(files.len());
+        let mut form = reqwest::multipart::Form::new();
+        for (i, path) in files.iter().enumerate() {
+            let (meta, name, part) = build_file_part(i, path)?;
+            attachments.push(meta);
+            form = form.part(name, part);
+        }
+        body["attachments"] = serde_json::Value::Array(attachments);
+        self.send_message_multipart(channel_id, body, form).await
+    }
+
+    /// Send a voice message: a single audio attachment carrying `duration_secs`
+    /// and a base64 `waveform`, with the message `flags` bit set to mark it a
+    /// voice message (IS_VOICE_MESSAGE = 8192). Uploaded via the same multipart
+    /// machinery as [`post_message_with_files`].
+    ///
+    /// `waveform` must already be base64-encoded (the CLI generates a short
+    /// placeholder when the user does not supply one).
+    pub async fn send_voice_message(
+        &self,
+        channel_id: &str,
+        file: &std::path::Path,
+        duration_secs: f64,
+        waveform: &str,
+    ) -> Result<serde_json::Value> {
+        parse_snowflake(channel_id)?;
+        let (mut meta, name, part) = build_file_part(0, file)?;
+        meta["duration_secs"] = serde_json::json!(duration_secs);
+        meta["waveform"] = serde_json::json!(waveform);
+
+        let mut body = serde_json::json!({
+            "content": "",
+            "flags": 8192,
+            "attachments": [meta],
+        });
+        if !self.is_app_token() {
+            body["mobile_network_type"] = serde_json::json!("unknown");
+        }
+
+        let form = reqwest::multipart::Form::new().part(name, part);
+        self.send_message_multipart(channel_id, body, form).await
+    }
+
+    /// Attach `payload_json` to a multipart `form` and POST it to the channel's
+    /// messages endpoint. Shared tail of the file/voice send paths.
+    async fn send_message_multipart(
+        &self,
+        channel_id: &str,
+        body: serde_json::Value,
+        form: reqwest::multipart::Form,
+    ) -> Result<serde_json::Value> {
+        let form = form.text(
+            "payload_json",
+            serde_json::to_string(&body).map_err(|e| anyhow!(e.to_string()))?,
+        );
+        self.raw()
+            .post_raw_multipart::<serde_json::Value>(format!("channels/{}/messages", channel_id), form)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))
     }
 
     /// Edit a message you authored. Returns the updated message.
@@ -543,22 +721,36 @@ impl WriteApi {
 
     /// Add a reaction (`@me`). `emoji` is a raw unicode emoji (e.g. `👍`) or a
     /// custom-emoji `name:id`; it is percent-encoded for the URL path.
+    /// When `burst` is `true`, sends a super (burst) reaction (`type=1`).
     pub async fn add_reaction(
         &self,
         channel_id: &str,
         message_id: &str,
         emoji: &str,
+        burst: bool,
     ) -> Result<()> {
         let cid = parse_snowflake(channel_id)?;
         let mid = parse_snowflake(message_id)?;
         let encoded = urlencoding::encode(emoji).into_owned();
-        self.http
-            .put_empty(Route::AddReaction {
-                channel_id: cid,
-                message_id: mid,
-                emoji: &encoded,
-            })
-            .await
+        if burst {
+            self.http
+                .put_empty(Route::Custom(
+                    format!(
+                        "channels/{}/messages/{}/reactions/{}/@me?location=Message&type=1",
+                        cid, mid, encoded
+                    )
+                    .into(),
+                ))
+                .await
+        } else {
+            self.http
+                .put_empty(Route::AddReaction {
+                    channel_id: cid,
+                    message_id: mid,
+                    emoji: &encoded,
+                })
+                .await
+        }
     }
 
     /// Remove your own reaction.
@@ -622,7 +814,7 @@ impl WriteApi {
     /// Open a DM with a user and send `content` to it. Returns the message.
     pub async fn send_dm(&self, recipient_id: &str, content: &str) -> Result<MessageRaw> {
         let dm = self.create_dm(recipient_id).await?;
-        self.send_message(&dm.id, content, None).await
+        self.send_message(&dm.id, content, None, &[]).await
     }
 
     /// Raw HTTP handle for the per-domain write modules in `cli/api_*.rs`.

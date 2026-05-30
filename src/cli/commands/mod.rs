@@ -28,11 +28,16 @@ mod dc_sync_all;
 mod dc_tail;
 mod dc_threads;
 mod dc_typing;
+mod dc_voice_message;
 // Write/client command groups produced by the multi-agent buildout.
 // `pub(crate)` so `args.rs` can name the nested `*Cmd` enums.
+pub(crate) mod dcw_account;
+pub(crate) mod dcw_automod;
 pub(crate) mod dcw_bans;
 pub(crate) mod dcw_channels;
+pub(crate) mod dcw_commands;
 pub(crate) mod dcw_compose;
+pub(crate) mod dcw_dmgroup;
 pub(crate) mod dcw_emojis;
 pub(crate) mod dcw_events;
 pub(crate) mod dcw_friends;
@@ -41,7 +46,10 @@ pub(crate) mod dcw_invites;
 pub(crate) mod dcw_members;
 pub(crate) mod dcw_msgops;
 pub(crate) mod dcw_perms;
+pub(crate) mod dcw_presence;
 pub(crate) mod dcw_roles;
+pub(crate) mod dcw_soundboard;
+pub(crate) mod dcw_stage;
 pub(crate) mod dcw_stickers;
 pub(crate) mod dcw_threads;
 pub(crate) mod dcw_webhooks;
@@ -121,7 +129,9 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
             channel,
             content,
             reply,
-        }) => dc_send::run(&ctx, &channel, &content, reply.as_deref()).await,
+            files,
+            stickers,
+        }) => dc_send::run(&ctx, &channel, &content, reply.as_deref(), &files, &stickers).await,
         Cmd::Dc(DcCmd::Edit {
             channel,
             message,
@@ -136,12 +146,13 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
             channel,
             message,
             emoji,
-        }) => dc_react::run(&ctx, &channel, &message, &emoji, false).await,
+            burst,
+        }) => dc_react::run(&ctx, &channel, &message, &emoji, false, burst).await,
         Cmd::Dc(DcCmd::Unreact {
             channel,
             message,
             emoji,
-        }) => dc_react::run(&ctx, &channel, &message, &emoji, true).await,
+        }) => dc_react::run(&ctx, &channel, &message, &emoji, true, false).await,
         Cmd::Dc(DcCmd::Pin { channel, message }) => {
             dc_pin::run(&ctx, &channel, &message, false).await
         }
@@ -149,7 +160,17 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
             dc_pin::run(&ctx, &channel, &message, true).await
         }
         Cmd::Dc(DcCmd::Typing { channel }) => dc_typing::run(&ctx, &channel).await,
-        Cmd::Dc(DcCmd::Dm { user_id, content }) => dc_dm::run(&ctx, &user_id, &content).await,
+        Cmd::Dc(DcCmd::Dm {
+            user_id,
+            content,
+            files,
+        }) => dc_dm::run(&ctx, &user_id, &content, &files).await,
+        Cmd::Dc(DcCmd::VoiceMessage {
+            channel,
+            file,
+            duration,
+            waveform,
+        }) => dc_voice_message::run(&ctx, &channel, &file, duration, waveform.as_deref()).await,
         Cmd::Dc(DcCmd::Thread(c)) => dcw_threads::dispatch(&ctx, c).await,
         Cmd::Dc(DcCmd::Channel(c)) => dcw_channels::dispatch(&ctx, c).await,
         Cmd::Dc(DcCmd::Perms(c)) => dcw_perms::dispatch(&ctx, c).await,
@@ -163,8 +184,15 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Cmd::Dc(DcCmd::Message(c)) => dcw_msgops::dispatch(&ctx, c).await,
         Cmd::Dc(DcCmd::Guild(c)) => dcw_guild::dispatch(&ctx, c).await,
         Cmd::Dc(DcCmd::Event(c)) => dcw_events::dispatch(&ctx, c).await,
+        Cmd::Dc(DcCmd::Stage(c)) => dcw_stage::dispatch(&ctx, c).await,
         Cmd::Dc(DcCmd::Webhook(c)) => dcw_webhooks::dispatch(&ctx, c).await,
         Cmd::Dc(DcCmd::Compose(c)) => dcw_compose::dispatch(&ctx, c).await,
+        Cmd::Dc(DcCmd::DmGroup(c)) => dcw_dmgroup::dispatch(&ctx, c).await,
+        Cmd::Dc(DcCmd::Presence(c)) => dcw_presence::dispatch(&ctx, c).await,
+        Cmd::Dc(DcCmd::Account(c)) => dcw_account::dispatch(&ctx, c).await,
+        Cmd::Dc(DcCmd::Automod(c)) => dcw_automod::dispatch(&ctx, c).await,
+        Cmd::Dc(DcCmd::Soundboard(c)) => dcw_soundboard::dispatch(&ctx, c).await,
+        Cmd::Dc(DcCmd::Command(c)) => dcw_commands::dispatch(&ctx, c).await,
         Cmd::Search(args) => search::run(&ctx, args),
         Cmd::Recent(args) => recent::run(&ctx, args),
         Cmd::Stats => stats::run(&ctx),

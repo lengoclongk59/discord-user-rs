@@ -29,6 +29,9 @@ pub enum ComposeCmd {
         /// Embed URL (makes the title a hyperlink).
         #[arg(long)]
         url: Option<String>,
+        /// Attach a file (repeatable: --file a.png --file b.pdf)
+        #[arg(long = "file", value_name = "PATH")]
+        files: Vec<std::path::PathBuf>,
     },
     /// Send a text-to-speech message.
     Tts {
@@ -73,6 +76,7 @@ pub async fn dispatch(ctx: &Ctx, cmd: ComposeCmd) -> Result<()> {
             description,
             color,
             url,
+            files,
         } => {
             let result = api
                 .compose_embed(
@@ -82,6 +86,7 @@ pub async fn dispatch(ctx: &Ctx, cmd: ComposeCmd) -> Result<()> {
                     description.as_deref(),
                     color,
                     url.as_deref(),
+                    &files,
                 )
                 .await?;
             if ctx.json {

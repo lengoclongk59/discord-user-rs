@@ -7,6 +7,11 @@ use crate::route::Route;
 
 impl WriteApi {
     /// POST channels/{channel_id}/messages — message with an embed.
+    ///
+    /// When `files` is non-empty the request is sent as `multipart/form-data`
+    /// with the embed JSON in `payload_json` and the files as `files[i]` parts;
+    /// otherwise the JSON-only path is used.
+    #[allow(clippy::too_many_arguments)]
     pub async fn compose_embed(
         &self,
         channel_id: &str,
@@ -15,6 +20,7 @@ impl WriteApi {
         description: Option<&str>,
         color: Option<u32>,
         url: Option<&str>,
+        files: &[std::path::PathBuf],
     ) -> Result<Value> {
         crate::cli::api::parse_snowflake(channel_id)?;
         let mut embed = serde_json::Map::new();
@@ -36,6 +42,9 @@ impl WriteApi {
         }
         if !self.is_app_token() {
             body["mobile_network_type"] = json!("unknown");
+        }
+        if !files.is_empty() {
+            return self.post_message_with_files(channel_id, body, files).await;
         }
         self.raw()
             .post::<Value, _>(

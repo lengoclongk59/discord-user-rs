@@ -14,6 +14,7 @@ pub async fn run(
     message: &str,
     emoji: &str,
     remove: bool,
+    burst: bool,
 ) -> Result<()> {
     let token = config::resolve_token(ctx.token_flag.clone())?;
     let api = WriteApi::new(&token);
@@ -21,7 +22,7 @@ pub async fn run(
     if remove {
         api.remove_reaction(channel, message, emoji).await?;
     } else {
-        api.add_reaction(channel, message, emoji).await?;
+        api.add_reaction(channel, message, emoji, burst).await?;
     }
 
     let verb = if remove { "Removed" } else { "Added" };

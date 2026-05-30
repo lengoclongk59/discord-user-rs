@@ -9,7 +9,7 @@ description: Use when working in the discord-user-rs repo (or any clone of it) a
 
 `discord` is the full-featured Discord **client CLI** bundled with the `discord-user-rs` library. It logs into Discord with a **user token** (self-bot — violates Discord ToS, use at your own risk) or a **bot/bearer token**, and does two things:
 
-1. **Acts as a client** — send/edit/delete/react to messages, DMs, threads, channels, roles, bans, invites, emojis, stickers, webhooks, scheduled events, relationships, polls, embeds, etc. (`dc` write commands).
+1. **Acts as a client** — send/edit/delete/react to messages (with file/sticker/voice attachments), DMs, group DMs, threads, channels, roles, bans, invites, emojis, stickers, soundboard, webhooks, scheduled events, stage instances, AutoMod rules, application commands, relationships, presence/status, your own profile, guild templates/welcome-screen/onboarding/widget/integrations, polls, embeds, etc. (`dc` write commands).
 2. **Archives + queries offline** — syncs guilds/channels into a local SQLite DB (`discord.db`) and runs search/stats/export/timeline over it with no network.
 
 ### Read vs write architecture (for maintainers)
@@ -100,15 +100,16 @@ These mutate Discord state. For **user** tokens, `dc send`/`dc dm` auto-include 
 
 | Command | What it does |
 |---|---|
-| `dc send <channel> <content> [--reply MSG]` | Send a message; `--reply` makes it a reply |
+| `dc send <channel> <content> [--reply MSG] [--file PATH …] [--sticker ID …]` | Send a message; `--reply` makes it a reply; `--file` attaches files (repeatable, multipart); `--sticker` attaches stickers (repeatable, max 3) |
 | `dc edit <channel> <message> <content>` | Edit a message you authored |
 | `dc delete <channel> <message> [-y]` | Delete a message |
-| `dc react <channel> <message> <emoji>` | Add a reaction (unicode `👍` or custom `name:id`) |
+| `dc react <channel> <message> <emoji> [--burst]` | Add a reaction (unicode `👍` or custom `name:id`); `--burst` = super/burst reaction |
 | `dc unreact <channel> <message> <emoji>` | Remove your own reaction |
 | `dc pin <channel> <message>` | Pin a message |
 | `dc unpin <channel> <message>` | Unpin a message |
 | `dc typing <channel>` | Fire the typing indicator once (~10s server-side) |
-| `dc dm <user_id> <content>` | Open/reuse a DM channel and send a message |
+| `dc dm <user_id> <content> [--file PATH …]` | Open/reuse a DM channel and send a message (with optional attachments) |
+| `dc voice-message <channel> <file> [--duration SECS] [--waveform B64]` | Send an audio file as a voice message (`flags=8192`); duration is sent as-is (default 1.0), waveform auto-generated as a placeholder if omitted |
 
 ### `dc` — write / client (nested groups)
 
@@ -126,11 +127,18 @@ Run `discord dc <group> --help` for each. All take raw snowflake IDs (validated 
 | `dc friend` | `add <user>`, `request <username>`, `accept <user>`, `remove <user>`, `block <user>`, `unblock <user>` |
 | `dc emoji` | `create <guild> <name> <image_path>`, `rename <guild> <emoji_id> <name>`, `delete <guild> <emoji_id> [-y]` |
 | `dc sticker` | `create <guild> <name> <tags> <file_path> [--description]`, `edit <guild> <sticker_id> [...]`, `delete <guild> <sticker_id> [-y]` |
-| `dc message` | `bulk-delete <chan> <id,id,…> [-y]` (2–100), `crosspost <chan> <msg>`, `clear-reactions <chan> <msg> [-y]`, `clear-emoji <chan> <msg> <emoji> [-y]`, `remove-user-reaction <chan> <msg> <user> <emoji>`, `reactors <chan> <msg> <emoji> [-n N]` |
-| `dc guild` | `edit <guild> [--name/--description/--afk-channel/--afk-timeout]`, `set-nick <guild> <nick>`, `leave <guild> [-y]` |
+| `dc message` | `bulk-delete <chan> <id,id,…> [-y]` (2–100), `crosspost <chan> <msg>`, `forward <src_chan> <msg> <dest_chan> [--content TEXT]` (message_reference type 1), `clear-reactions <chan> <msg> [-y]`, `clear-emoji <chan> <msg> <emoji> [-y]`, `remove-user-reaction <chan> <msg> <user> <emoji>`, `reactors <chan> <msg> <emoji> [-n N]` |
+| `dc guild` | `edit <guild> [--name/--description/--afk-channel/--afk-timeout]`, `set-nick <guild> <nick>`, `leave <guild> [-y]`, `vanity <guild>`, `widget-get <guild>`, `widget-edit <guild> [--enabled true\|false] [--channel ID]`, `welcome-get <guild>`, `welcome-edit <guild> [--enabled true\|false] [--description TEXT]`, `onboarding-get <guild>`, `integrations <guild>`, `integration-delete <guild> <integration_id> [-y]`, `templates <guild>`, `template-create <guild> <name> [--description TEXT]`, `template-sync <guild> <code>`, `template-delete <guild> <code> [-y]` |
 | `dc event` | `create <guild> <name> <start_iso> [--type voice\|stage\|external] [--channel/--location/--end-iso/--description]`, `edit <guild> <event_id> [...]`, `delete <guild> <event_id> [-y]` |
 | `dc webhook` | `create <chan> <name>`, `edit <webhook_id> [--name/--channel]`, `delete <webhook_id> [-y]`, `execute <webhook_id> <token> <content>`, `list-channel <chan>` |
-| `dc compose` | `embed <chan> [--content/--title/--description/--color/--url]`, `tts <chan> <content>`, `poll <chan> <question> <ans,ans,…> [--duration H] [--multiselect]`, `mark-read <chan> <msg>` |
+| `dc compose` | `embed <chan> [--content/--title/--description/--color/--url] [--file PATH …]`, `tts <chan> <content>`, `poll <chan> <question> <ans,ans,…> [--duration H] [--multiselect]`, `mark-read <chan> <msg>` |
+| `dc dm-group` | `create <user,user,…>` (2+ recipients), `add <chan> <user>`, `remove <chan> <user>`, `set-name <chan> <name>` |
+| `dc presence` | `set <online\|idle\|dnd\|invisible> [--activity TEXT] [--type playing\|streaming\|listening\|watching\|custom] [--url URL]` — connects the Gateway and **holds the connection open until Ctrl+C** (presence reverts on disconnect) |
+| `dc account` | `edit [--username/--bio/--pronouns/--accent-color/--avatar PATH/--banner PATH]` — edits your own profile (PATCH `/users/@me` + `/users/@me/profile`); at least one field required |
+| `dc automod` | `list <guild>`, `get <guild> <rule>`, `create <guild> <name> --event-type N --trigger-type N [--keyword w,w] [--preset N,N] [--mention-limit N] [--enabled true\|false] [--exempt-roles ids] [--exempt-channels ids]`, `edit <guild> <rule> [...]`, `delete <guild> <rule> [-y]` (trigger: 1=KEYWORD 3=SPAM 4=KEYWORD_PRESET 5=MENTION_SPAM; event: 1=MESSAGE_SEND; default action BLOCK_MESSAGE) |
+| `dc soundboard` | `list-default`, `list <guild>`, `get <guild> <sound>`, `create <guild> <name> <file> [--volume 0.0-1.0] [--emoji-id ID] [--emoji-name 😀]` (mp3/ogg ≤512 KB), `edit <guild> <sound> [...]`, `delete <guild> <sound> [-y]`, `send <channel> <sound> [--source-guild ID]` (plays into a voice channel you're connected to) |
+| `dc stage` | `start <channel> <topic> [--privacy 1\|2] [--send-start-notification]` (topic 1-120, privacy default 2=GUILD_ONLY), `get <channel>`, `edit <channel> [--topic/--privacy]`, `stop <channel> [-y]` |
+| `dc command` | `list [--guild G]`, `get [--guild G] <command_id>`, `create <name> <description> [--guild G] [--type 1\|2\|3]` (registers an app command; works for bot/application tokens), `delete [--guild G] <command_id> [-y]`, `run <channel> <command_name>` (**not supported over REST for user tokens — prints an explanation; use `list`/`create` instead**) |
 
 ### Local archive commands (offline, operate on `discord.db`)
 
@@ -168,12 +176,18 @@ discord export 1234567890 -f json -o channel.json
 **Act as a client:**
 ```bash
 discord dc send 123 "hello" --reply 456
-discord dc react 123 456 👍
+discord dc send 123 "see attached" --file report.pdf --file pic.png
+discord dc react 123 456 👍 --burst
+discord dc voice-message 123 clip.ogg --duration 3.5
 discord dc thread create 123 "planning" --auto-archive 1440
 discord dc member kick 111 222 --reason "spam" -y
 discord dc ban add 111 222 --delete-seconds 86400 --reason "raid" -y
 discord dc compose poll 123 "Lunch?" "Pizza,Sushi,Tacos" --multiselect
 discord dc webhook create 123 "ci-bot"
+discord dc presence set dnd --activity "shipping features" --type playing
+discord dc dm-group create 111,222,333
+discord dc automod create 111 "no-invites" --event-type 1 --trigger-type 1 --keyword "discord.gg,join my"
+discord dc stage start 999 "Town Hall" --send-start-notification
 ```
 
 **Live-monitor a channel:** `discord dc tail <channel_id> -n 50`
@@ -181,7 +195,9 @@ discord dc webhook create 123 "ci-bot"
 ## Gotchas
 
 - **Self-botting violates Discord ToS.** Account bans are a real risk; throttle write activity.
-- **Confirmation prompts:** destructive commands (`delete`, `kick`, `ban`, channel/role/emoji/sticker/event/webhook `delete`, `guild leave`, `message bulk-delete`/`clear-reactions`/`clear-emoji`) prompt for `yes` on stdin unless `-y/--yes` is passed.
+- **Confirmation prompts:** destructive commands (`delete`, `kick`, `ban`, channel/role/emoji/sticker/event/webhook `delete`, `guild leave`, `message bulk-delete`/`clear-reactions`/`clear-emoji`, `automod delete`, `soundboard delete`, `stage stop`, `command delete`, `guild integration-delete`/`template-delete`) prompt for `yes` on stdin unless `-y/--yes` is passed.
+- **`dc presence set` holds the Gateway connection open** until Ctrl+C — Discord only honors a gateway presence update while the originating socket stays connected, so a one-shot send would revert immediately. Leave it running to keep the status live.
+- **`dc command run` is intentionally unsupported:** invoking a slash command as a user needs the undocumented `/interactions` flow (live `session_id` + nonce) and isn't reachable over REST. The subcommand prints an explanation and exits; use `dc command list`/`create` (which work for bot/application tokens). Voice messages and soundboard `send` upload/trigger over REST but **do not stream real-time audio** — the CLI has no UDP/Opus voice media transport.
 - **Local validation:** snowflake IDs, `bulk-delete` count (2–100), `reactors --limit` (≤100), and `thread --auto-archive` (60/1440/4320/10080) are checked locally and fail fast before any request.
 - **Audit-log `--reason`** is supported on `ban add/remove`, `member kick/timeout/untimeout`, and `channel delete`.
 - **`mobile_network_type`** fingerprint is auto-added on message sends for user tokens and omitted for `Bot `/`Bearer ` tokens (Discord 403 code 40333 otherwise).
@@ -196,9 +212,11 @@ discord dc webhook create 123 "ci-bot"
 | Argument definitions (clap) | `src/cli/args.rs` |
 | Subcommand dispatch | `src/cli/commands/mod.rs` |
 | Read command impls | `src/cli/commands/dc_*.rs`, `*.rs` |
-| Write command groups | `src/cli/commands/dcw_<domain>.rs` |
+| Flat write command impls | `src/cli/commands/dc_send.rs`, `dc_react.rs`, `dc_dm.rs`, `dc_voice_message.rs`, … |
+| Write command groups | `src/cli/commands/dcw_<domain>.rs` (e.g. `dcw_presence`, `dcw_dmgroup`, `dcw_account`, `dcw_automod`, `dcw_soundboard`, `dcw_stage`, `dcw_commands`) |
 | Read REST wrapper (`Api`/`ReadOnlyHttp`) | `src/cli/api.rs` |
-| Write REST wrapper (`WriteApi`/`WriteHttp`) | `src/cli/api.rs` + `src/cli/api_<domain>.rs` |
+| Write REST wrapper (`WriteApi`/`WriteHttp`) | `src/cli/api.rs` + `src/cli/api_<domain>.rs` (incl. `api_account`, `api_automod`, `api_soundboard`, `api_stage`, `api_commands`) |
+| Multipart upload helpers (files / stickers / voice / soundboard / images) | `post_raw_multipart`, `post_message_with_files`, `send_message_with_files`, `send_voice_message`, `build_file_part`, `guess_mime` in `src/cli/api.rs` |
 | Generic endpoint escape hatch | `Route::Custom` in `src/route.rs` |
 | Token resolution + `.env` upsert | `src/cli/config.rs` |
 | Token auto-discovery (per-platform) | `src/cli/auth/{windows,macos,linux}.rs` |

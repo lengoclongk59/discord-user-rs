@@ -77,6 +77,19 @@ pub enum MessageCmd {
         #[arg(short = 'n', long, default_value_t = 25)]
         limit: u32,
     },
+
+    /// Forward a message to another channel
+    Forward {
+        /// Source channel ID (where the original message lives)
+        source_channel: String,
+        /// Message ID to forward
+        message: String,
+        /// Destination channel ID (where to forward the message)
+        dest_channel: String,
+        /// Optional text content to attach to the forward
+        #[arg(long)]
+        content: Option<String>,
+    },
 }
 
 pub async fn dispatch(ctx: &Ctx, cmd: MessageCmd) -> Result<()> {
@@ -242,6 +255,31 @@ pub async fn dispatch(ctx: &Ctx, cmd: MessageCmd) -> Result<()> {
             let limit = limit.clamp(1, 100);
             let v = api.msg_get_reactors(&channel, &message, &emoji, limit).await?;
             output::print_json(&v);
+        }
+
+        MessageCmd::Forward {
+            source_channel,
+            message,
+            dest_channel,
+            content,
+        } => {
+            let v = api
+                .msg_forward(
+                    &source_channel,
+                    &message,
+                    &dest_channel,
+                    content.as_deref(),
+                )
+                .await?;
+            if ctx.json {
+                output::print_json(&v);
+            } else {
+                let msg_id = v["id"].as_str().unwrap_or("unknown");
+                output::success(&format!(
+                    "Forwarded message {} to channel {} (new message id: {}).",
+                    message, dest_channel, msg_id
+                ));
+            }
         }
     }
 
