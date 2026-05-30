@@ -1,10 +1,31 @@
 //! Console output helpers: rich tables (comfy-table) and colored status lines.
 
+use std::io::{self, Write};
+
+use anyhow::Result;
 use colored::Colorize;
 use comfy_table::{presets::UTF8_BORDERS_ONLY, Cell, Table};
 use serde::Serialize;
 
 use crate::cli::types::StoredMessage;
+
+/// Prompt the user to confirm a destructive action on stdin.
+///
+/// Prints `<prompt> Type 'yes' to confirm: ` and returns `Ok(true)` only if
+/// the user types exactly `yes`. Shared by every `-y/--yes`-gated command so
+/// the confirmation UX stays uniform.
+pub fn confirm(prompt: &str) -> Result<bool> {
+    print!("{} Type 'yes' to confirm: ", prompt);
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    if input.trim() == "yes" {
+        Ok(true)
+    } else {
+        dim("Aborted.");
+        Ok(false)
+    }
+}
 
 pub fn print_json<T: Serialize>(data: &T) {
     match serde_json::to_string_pretty(data) {

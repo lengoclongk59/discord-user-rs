@@ -1,12 +1,17 @@
-//! Read-only invariant test for the bundled CLI.
+//! Write-surface containment test for the bundled CLI.
 //!
-//! Greps `src/cli/` for any forbidden write-method calls and fails if any are
-//! found outside the single sanctioned exception (`src/cli/auth/windows.rs`).
-//! This is the test-time half of the read-only invariant; the type-level
-//! half is `ReadOnlyHttp` in `src/cli/api.rs`, which exposes only `.get<T>()`.
+//! The CLI is a full Discord client (it sends, edits, deletes, reacts, …),
+//! but raw HTTP write verbs must stay confined to the API layer
+//! (`src/cli/api.rs`, home of `WriteApi`). Every other CLI module — command
+//! handlers, db, output, config — must go *through* `WriteApi`/`Api` rather
+//! than constructing write requests directly. This grep gate fails if a
+//! forbidden write-method call appears outside the sanctioned files.
 //!
-//! Only meaningful when the `cli` feature is on — the library half of the
-//! crate (under `src/`) intentionally implements write verbs.
+//! Sanctioned files:
+//! - `src/cli/api.rs`        — the `WriteApi` layer (the one place writes live)
+//! - `src/cli/auth/windows.rs` — `validate_token` uses raw reqwest pre-token
+//!
+//! Only meaningful when the `cli` feature is on.
 
 #![cfg(feature = "cli")]
 
@@ -23,11 +28,21 @@ const FORBIDDEN: &[&str] = &[
     ".delete(",
     ".delete_with_response(",
     ".post_empty(",
+    ".put_empty(",
     ".post_no_response(",
     ".patch_no_response(",
     ".post_with_referer(",
     ".post_multipart(",
     ".post_raw_multipart(",
+    // Lower-level request builders that take a Method argument — these can
+    // issue any verb without a `Method::*` literal on the call line, so list
+    // them explicitly (e.g. `put_optional`, the `request*` family).
+    ".put_optional(",
+    ".request(",
+    ".request_no_response(",
+    ".request_optional(",
+    ".request_with_reason(",
+    ".request_with_reason_no_response(",
     "Method::POST",
     "Method::PATCH",
     "Method::PUT",
@@ -35,7 +50,7 @@ const FORBIDDEN: &[&str] = &[
 ];
 
 #[test]
-fn no_write_methods_in_cli_src() {
+fn write_methods_confined_to_api_layer() {
     let mut violations: Vec<String> = Vec::new();
     for entry in WalkDir::new("src/cli").into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
@@ -45,9 +60,19 @@ fn no_write_methods_in_cli_src() {
         if path.extension().and_then(|e| e.to_str()) != Some("rs") {
             continue;
         }
-        // Sole sanctioned exception: auth/windows.rs::validate_token uses raw reqwest.
+        // Sanctioned files where raw write verbs are allowed:
+        //  - cli/api.rs          : the core WriteApi layer
+        //  - cli/api_*.rs        : per-domain WriteApi extension modules
+        //  - cli/auth/windows.rs : validate_token uses raw reqwest pre-token
         let path_str = path.to_string_lossy().replace('\\', "/");
-        if path_str.ends_with("cli/auth/windows.rs") {
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if path_str.ends_with("cli/api.rs")
+            || path_str.ends_with("cli/auth/windows.rs")
+            || (path_str.contains("/cli/") && file_name.starts_with("api_"))
+        {
             continue;
         }
         let body = match fs::read_to_string(path) {
@@ -71,7 +96,7 @@ fn no_write_methods_in_cli_src() {
     }
     assert!(
         violations.is_empty(),
-        "Read-only invariant violated:\n{}",
+        "Write verbs must be confined to src/cli/api.rs (WriteApi). Found raw write calls elsewhere:\n{}",
         violations.join("\n")
     );
 }

@@ -1,13 +1,15 @@
-//! Read-only Discord REST wrapper.
+//! Discord REST wrappers — read (`Api`) and write (`WriteApi`).
 //!
-//! Wraps `crate::client::DiscordHttpClient` in a `ReadOnlyHttp` newtype
-//! that exposes only `.get()`. The read-only invariant of this binary is
-//! enforced at the type level: there is no path from `Api` to a write verb.
+//! Reads go through [`Api`], which wraps `DiscordHttpClient` in a
+//! [`ReadOnlyHttp`] newtype exposing only `.get()`. Writes (send, edit,
+//! delete, react, pin, typing, DMs) go through [`WriteApi`], which wraps a
+//! [`WriteHttp`] newtype exposing the mutating verbs. Keeping the two
+//! surfaces in separate types means read-only call sites still cannot reach
+//! a write verb by accident — you have to construct a `WriteApi` on purpose.
 //!
-//! The single sanctioned exception is `auth::windows::validate_token`, which
-//! uses raw `reqwest` directly (NOT through this module) because it must run
-//! before a token exists in the resolution chain. The `tests/readonly.rs`
-//! grep test allowlists that file explicitly.
+//! `auth::windows::validate_token` still uses raw `reqwest` directly (NOT
+//! through this module) because it must run before a token exists in the
+//! resolution chain.
 
 use std::time::Duration;
 
@@ -397,6 +399,247 @@ impl Api {
                 ))
             }
         }
+    }
+}
+
+/// Newtype that exposes the mutating verbs of `DiscordHttpClient`.
+///
+/// Separate from [`ReadOnlyHttp`] so read-only command code can't reach a
+/// write verb by accident — a `WriteApi` has to be constructed deliberately.
+pub struct WriteHttp {
+    inner: DiscordHttpClient,
+}
+
+impl WriteHttp {
+    pub fn new(token: &str) -> Self {
+        Self {
+            inner: DiscordHttpClient::new(token, None, false),
+        }
+    }
+
+    /// `true` for `Bot `/`Bearer ` tokens. User-account fingerprint fields
+    /// (e.g. `mobile_network_type`) must be omitted under these.
+    fn is_application_token(&self) -> bool {
+        self.inner.is_application_token()
+    }
+
+    async fn post<T: DeserializeOwned>(
+        &self,
+        route: Route<'_>,
+        body: serde_json::Value,
+    ) -> Result<T> {
+        self.inner
+            .post::<T, _>(route, body)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))
+    }
+
+    async fn patch<T: DeserializeOwned>(
+        &self,
+        route: Route<'_>,
+        body: serde_json::Value,
+    ) -> Result<T> {
+        self.inner
+            .patch::<T, _>(route, body)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))
+    }
+
+    async fn delete(&self, route: Route<'_>) -> Result<()> {
+        self.inner
+            .delete(route)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))
+    }
+
+    async fn put_empty(&self, route: Route<'_>) -> Result<()> {
+        self.inner
+            .put_empty(route)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))
+    }
+
+    async fn post_empty(&self, route: Route<'_>) -> Result<()> {
+        self.inner
+            .post_empty(route)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))
+    }
+}
+
+/// Write-capable Discord REST wrapper used by the interactive client
+/// commands (send, edit, delete, react, pin, typing, DMs).
+pub struct WriteApi {
+    http: WriteHttp,
+}
+
+impl WriteApi {
+    pub fn new(token: &str) -> Self {
+        Self {
+            http: WriteHttp::new(token),
+        }
+    }
+
+    /// Send a message to a channel. `reply_to`, when set, makes this a reply
+    /// (Discord `message_reference`). Returns the created message.
+    pub async fn send_message(
+        &self,
+        channel_id: &str,
+        content: &str,
+        reply_to: Option<&str>,
+    ) -> Result<MessageRaw> {
+        let cid = parse_snowflake(channel_id)?;
+        let mut body = serde_json::json!({
+            "content": content,
+            "tts": false,
+            "flags": 0,
+        });
+        // User-account tokens mimic the mobile client; bot endpoints reject
+        // this field (HTTP 403 code 40333). Mirror the library's split.
+        if !self.http.is_application_token() {
+            body["mobile_network_type"] = serde_json::json!("unknown");
+        }
+        if let Some(mid) = reply_to {
+            parse_snowflake(mid)?; // validate
+            body["message_reference"] = serde_json::json!({ "message_id": mid });
+        }
+        self.http
+            .post::<MessageRaw>(Route::CreateMessage { channel_id: cid }, body)
+            .await
+    }
+
+    /// Edit a message you authored. Returns the updated message.
+    pub async fn edit_message(
+        &self,
+        channel_id: &str,
+        message_id: &str,
+        content: &str,
+    ) -> Result<MessageRaw> {
+        let cid = parse_snowflake(channel_id)?;
+        let mid = parse_snowflake(message_id)?;
+        let body = serde_json::json!({ "content": content });
+        self.http
+            .patch::<MessageRaw>(
+                Route::EditMessage {
+                    channel_id: cid,
+                    message_id: mid,
+                },
+                body,
+            )
+            .await
+    }
+
+    /// Delete a message.
+    pub async fn delete_message(&self, channel_id: &str, message_id: &str) -> Result<()> {
+        let cid = parse_snowflake(channel_id)?;
+        let mid = parse_snowflake(message_id)?;
+        self.http
+            .delete(Route::DeleteMessage {
+                channel_id: cid,
+                message_id: mid,
+            })
+            .await
+    }
+
+    /// Add a reaction (`@me`). `emoji` is a raw unicode emoji (e.g. `👍`) or a
+    /// custom-emoji `name:id`; it is percent-encoded for the URL path.
+    pub async fn add_reaction(
+        &self,
+        channel_id: &str,
+        message_id: &str,
+        emoji: &str,
+    ) -> Result<()> {
+        let cid = parse_snowflake(channel_id)?;
+        let mid = parse_snowflake(message_id)?;
+        let encoded = urlencoding::encode(emoji).into_owned();
+        self.http
+            .put_empty(Route::AddReaction {
+                channel_id: cid,
+                message_id: mid,
+                emoji: &encoded,
+            })
+            .await
+    }
+
+    /// Remove your own reaction.
+    pub async fn remove_reaction(
+        &self,
+        channel_id: &str,
+        message_id: &str,
+        emoji: &str,
+    ) -> Result<()> {
+        let cid = parse_snowflake(channel_id)?;
+        let mid = parse_snowflake(message_id)?;
+        let encoded = urlencoding::encode(emoji).into_owned();
+        self.http
+            .delete(Route::RemoveOwnReaction {
+                channel_id: cid,
+                message_id: mid,
+                emoji: &encoded,
+            })
+            .await
+    }
+
+    /// Pin a message in a channel.
+    pub async fn pin_message(&self, channel_id: &str, message_id: &str) -> Result<()> {
+        let cid = parse_snowflake(channel_id)?;
+        let mid = parse_snowflake(message_id)?;
+        self.http
+            .put_empty(Route::PinMessage {
+                channel_id: cid,
+                message_id: mid,
+            })
+            .await
+    }
+
+    /// Unpin a message.
+    pub async fn unpin_message(&self, channel_id: &str, message_id: &str) -> Result<()> {
+        let cid = parse_snowflake(channel_id)?;
+        let mid = parse_snowflake(message_id)?;
+        self.http
+            .delete(Route::UnpinMessage {
+                channel_id: cid,
+                message_id: mid,
+            })
+            .await
+    }
+
+    /// Fire the typing indicator for a channel (lasts ~10s server-side).
+    pub async fn trigger_typing(&self, channel_id: &str) -> Result<()> {
+        let cid = parse_snowflake(channel_id)?;
+        self.http
+            .post_empty(Route::TriggerTyping { channel_id: cid })
+            .await
+    }
+
+    /// Open (or fetch) the DM channel with a user. Returns the DM channel.
+    pub async fn create_dm(&self, recipient_id: &str) -> Result<ChannelDto> {
+        parse_snowflake(recipient_id)?; // validate
+        let body = serde_json::json!({ "recipients": [recipient_id] });
+        self.http.post::<ChannelDto>(Route::CreateDm, body).await
+    }
+
+    /// Open a DM with a user and send `content` to it. Returns the message.
+    pub async fn send_dm(&self, recipient_id: &str, content: &str) -> Result<MessageRaw> {
+        let dm = self.create_dm(recipient_id).await?;
+        self.send_message(&dm.id, content, None).await
+    }
+
+    /// Raw HTTP handle for the per-domain write modules in `cli/api_*.rs`.
+    ///
+    /// These modules add `impl WriteApi` blocks that reach arbitrary endpoints
+    /// via [`Route::Custom`]. Returns `crate::error::Result` (DiscordError);
+    /// map to `anyhow` at the call site with `.map_err(|e| anyhow!(e.to_string()))`.
+    /// `cli/api_*.rs` is the only place (besides this file) where raw write
+    /// verbs are allowed — see `tests/readonly.rs`.
+    pub(crate) fn raw(&self) -> &DiscordHttpClient {
+        &self.http.inner
+    }
+
+    /// `true` for `Bot `/`Bearer ` tokens — omit user-account fingerprint
+    /// fields (e.g. `mobile_network_type`) under these.
+    pub(crate) fn is_app_token(&self) -> bool {
+        self.http.is_application_token()
     }
 }
 

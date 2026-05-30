@@ -1,8 +1,8 @@
 [package]
 name = "discord-user-rs"
-version = "0.4.5"
+version = "0.5.0"
 edition = "2021"
-description = "Discord self-bot client library — user-token WebSocket gateway and REST API, with optional read-only archival CLI"
+description = "Discord self-bot client library — user-token WebSocket gateway and REST API, with an optional full-featured CLI client (archive + send/edit/react/threads/roles/bans/…)"
 license = "MIT"
 repository = "https://github.com/lengoclongk59/discord-user-rs"
 homepage = "https://github.com/lengoclongk59/discord-user-rs"

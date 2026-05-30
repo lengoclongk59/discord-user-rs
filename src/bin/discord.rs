@@ -1,4 +1,4 @@
-//! `discord` binary — bundled archival CLI built on `discord-user-rs`.
+//! `discord` binary — bundled Discord CLI client built on `discord-user-rs`.
 //!
 //! Built only when the `cli` feature is enabled:
 //!   `cargo build --features cli --bin discord`
@@ -8,8 +8,31 @@ use discord_user::cli::args::Cli;
 use discord_user::cli::{commands, output};
 use std::process::ExitCode;
 
-#[tokio::main]
-async fn main() -> ExitCode {
+/// Roomy stack for the worker thread (see `main`).
+const WORKER_STACK_SIZE: usize = 32 * 1024 * 1024;
+
+fn main() -> ExitCode {
+    // clap's command graph is large (the `dc` group nests ~15 write/client
+    // sub-groups). In debug builds clap runs `Command::debug_assert`, whose
+    // recursive validation is stack-hungry and overflows Windows' default
+    // 1 MiB main-thread stack. Run everything on a thread with a roomy stack
+    // instead — the same approach rustc uses for its own driver.
+    let worker = std::thread::Builder::new()
+        .name("discord-cli".into())
+        .stack_size(WORKER_STACK_SIZE)
+        .spawn(run)
+        .expect("failed to spawn worker thread");
+    match worker.join() {
+        Ok(code) => code,
+        Err(_) => {
+            output::err("worker thread panicked");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Parse args and dispatch the command on its own Tokio runtime.
+fn run() -> ExitCode {
     let cli = Cli::parse();
 
     if cli.no_color || std::env::var("NO_COLOR").is_ok() {
@@ -24,7 +47,15 @@ async fn main() -> ExitCode {
         .with_writer(std::io::stderr)
         .init();
 
-    match commands::dispatch(cli).await {
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            output::err(&format!("failed to start async runtime: {}", e));
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match runtime.block_on(commands::dispatch(cli)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             output::err(&format!("{:#}", e));

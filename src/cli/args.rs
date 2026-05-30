@@ -209,6 +209,128 @@ pub enum DcCmd {
         #[arg(short = 'o', long)]
         output: Option<PathBuf>,
     },
+
+    // ---- Write / interactive client commands ----
+    /// Send a message to a channel
+    Send {
+        /// Channel ID
+        channel: String,
+        /// Message content
+        content: String,
+        /// Reply to a message ID (sets message_reference)
+        #[arg(long)]
+        reply: Option<String>,
+    },
+    /// Edit a message you authored
+    Edit {
+        /// Channel ID
+        channel: String,
+        /// Message ID to edit
+        message: String,
+        /// New message content
+        content: String,
+    },
+    /// Delete a message
+    Delete {
+        /// Channel ID
+        channel: String,
+        /// Message ID to delete
+        message: String,
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Add a reaction to a message
+    React {
+        /// Channel ID
+        channel: String,
+        /// Message ID
+        message: String,
+        /// Emoji: unicode (👍) or custom `name:id`
+        emoji: String,
+    },
+    /// Remove your own reaction from a message
+    Unreact {
+        /// Channel ID
+        channel: String,
+        /// Message ID
+        message: String,
+        /// Emoji: unicode (👍) or custom `name:id`
+        emoji: String,
+    },
+    /// Pin a message in a channel
+    Pin {
+        /// Channel ID
+        channel: String,
+        /// Message ID
+        message: String,
+    },
+    /// Unpin a message in a channel
+    Unpin {
+        /// Channel ID
+        channel: String,
+        /// Message ID
+        message: String,
+    },
+    /// Trigger the typing indicator in a channel
+    Typing {
+        /// Channel ID
+        channel: String,
+    },
+    /// Send a direct message to a user
+    Dm {
+        /// Recipient user ID
+        user_id: String,
+        /// Message content
+        content: String,
+    },
+
+    // ---- Nested write/client command groups (multi-agent buildout) ----
+    /// Thread management (create, join, archive, members, …)
+    #[command(subcommand)]
+    Thread(crate::cli::commands::dcw_threads::ThreadCmd),
+    /// Channel management (create, edit, delete, slowmode)
+    #[command(subcommand)]
+    Channel(crate::cli::commands::dcw_channels::ChannelCmd),
+    /// Channel permission overwrites (set, clear, list)
+    #[command(subcommand)]
+    Perms(crate::cli::commands::dcw_perms::PermsCmd),
+    /// Guild member ops (nick, roles, timeout, kick)
+    #[command(subcommand)]
+    Member(crate::cli::commands::dcw_members::MemberCmd),
+    /// Guild bans (add, remove, list, get)
+    #[command(subcommand)]
+    Ban(crate::cli::commands::dcw_bans::BanCmd),
+    /// Guild roles (create, edit, delete, list)
+    #[command(subcommand)]
+    Role(crate::cli::commands::dcw_roles::RoleCmd),
+    /// Invites (create, delete, list, get)
+    #[command(subcommand)]
+    Invite(crate::cli::commands::dcw_invites::InviteCmd),
+    /// Relationships / friends (add, accept, remove, block)
+    #[command(subcommand)]
+    Friend(crate::cli::commands::dcw_friends::FriendCmd),
+    /// Custom guild emojis (create, rename, delete)
+    #[command(subcommand)]
+    Emoji(crate::cli::commands::dcw_emojis::EmojiCmd),
+    /// Custom guild stickers (create, edit, delete)
+    #[command(subcommand)]
+    Sticker(crate::cli::commands::dcw_stickers::StickerCmd),
+    /// Advanced message ops (bulk-delete, crosspost, reactions)
+    #[command(subcommand)]
+    Message(crate::cli::commands::dcw_msgops::MessageCmd),
+    /// Guild settings & own membership (edit, set-nick, leave)
+    #[command(subcommand)]
+    Guild(crate::cli::commands::dcw_guild::GuildCmd),
+    /// Scheduled events (create, edit, delete)
+    #[command(subcommand)]
+    Event(crate::cli::commands::dcw_events::EventCmd),
+    /// Webhooks (create, edit, delete, execute, list)
+    #[command(subcommand)]
+    Webhook(crate::cli::commands::dcw_webhooks::WebhookCmd),
+    /// Rich message composition (embed, tts, poll, mark-read)
+    #[command(subcommand)]
+    Compose(crate::cli::commands::dcw_compose::ComposeCmd),
 }
 
 #[derive(Args, Debug)]

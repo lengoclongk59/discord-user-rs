@@ -145,7 +145,11 @@ impl Ratelimit {
                     }
                 }
                 _ => {
-                    if part.chars().all(|c| c.is_ascii_digit()) && part.len() > 10 {
+                    // Normalize ANY all-digit segment to `{id}` so per-route
+                    // rate-limit buckets aren't fragmented by short numeric
+                    // path params (e.g. positions, answer ids). The old
+                    // `len() > 10` snowflake heuristic missed those.
+                    if !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()) {
                         route.push_str("{id}");
                     } else {
                         route.push_str(part);
@@ -396,6 +400,13 @@ impl DiscordHttpClient {
         self.request_no_response(Method::POST, route, None::<()>).await
     }
 
+    /// Make a PUT request with no body and no response body (e.g. add
+    /// reaction — `PUT /channels/{c}/messages/{m}/reactions/{e}/@me` returns
+    /// 204 with no payload).
+    pub async fn put_empty(&self, route: crate::route::Route<'_>) -> Result<()> {
+        self.request_no_response(Method::PUT, route, None::<()>).await
+    }
+
     /// Make a POST request with a body but discard the response body.
     pub async fn post_no_response<B: Serialize>(&self, route: crate::route::Route<'_>, body: B) -> Result<()> {
         self.request_no_response(Method::POST, route, Some(body)).await
@@ -633,21 +644,43 @@ impl DiscordHttpClient {
     /// Apply Discord-specific shared headers (auth, super-properties,
     /// locale, timezone, and optionally the audit-log reason) to a
     /// `RequestBuilder`.
+    ///
+    /// Header set differs by token flavour:
+    ///
+    /// - **User / self-bot tokens** carry the full client fingerprint
+    ///   (`X-Super-Properties`, `X-Discord-Locale`, `X-Discord-Timezone`)
+    ///   plus the Chrome `User-Agent` baked into the client builder, so the
+    ///   gateway and REST traffic look like a real Discord client.
+    /// - **Bot / Bearer tokens** suppress every client-fingerprint header
+    ///   AND override `User-Agent` to the Discord-mandated
+    ///   `DiscordBot (URL, version)` form. Sending Chrome-style headers
+    ///   under a bot token routes the request into Discord's Cloudflare WAF
+    ///   and returns HTTP 403 with body `{"message":"internal network error","code":40333}`
+    ///   — visible to operators as "Missing permission" even when the bot
+    ///   has Administrator.
     fn apply_common_headers(&self, mut request: reqwest::RequestBuilder, reason: Option<&str>) -> reqwest::RequestBuilder {
-        // Authorization. Detect bot/bearer tokens and pass them through
-        // verbatim; user tokens stay bare.
+        // Authorization. Bot/Bearer tokens are passed through verbatim;
+        // user tokens stay bare. Identical wire shape; the predicate below
+        // gates the rest of the header set.
         let auth = self.auth_header_value();
         request = request.header(header::AUTHORIZATION, auth);
 
-        if let Some(sp) = self.super_properties_b64.as_deref() {
-            request = request.header("X-Super-Properties", sp);
+        if self.is_application_token() {
+            // Bot path: override User-Agent and skip the fingerprint headers.
+            request = request.header(header::USER_AGENT, concat!("DiscordBot (https://github.com/lengoclongk59/discord-user-rs, ", env!("CARGO_PKG_VERSION"), ")"));
+        } else {
+            // User-token path: full client fingerprint.
+            if let Some(sp) = self.super_properties_b64.as_deref() {
+                request = request.header("X-Super-Properties", sp);
+            }
+            if let Some(loc) = self.discord_locale.as_deref() {
+                request = request.header("X-Discord-Locale", loc);
+            }
+            if let Some(tz) = self.discord_timezone.as_deref() {
+                request = request.header("X-Discord-Timezone", tz);
+            }
         }
-        if let Some(loc) = self.discord_locale.as_deref() {
-            request = request.header("X-Discord-Locale", loc);
-        }
-        if let Some(tz) = self.discord_timezone.as_deref() {
-            request = request.header("X-Discord-Timezone", tz);
-        }
+
         if let Some(raw_reason) = reason {
             // Discord requires the reason be URL-encoded so non-ASCII and
             // header-illegal characters survive the wire.

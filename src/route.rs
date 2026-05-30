@@ -6,6 +6,12 @@ use urlencoding;
 /// Generates the path strings and parameters for HTTP requests.
 #[derive(Debug, Clone)]
 pub enum Route<'a> {
+    /// Escape hatch: a fully-formed API path (relative to `/api/v10/`, e.g.
+    /// `guilds/123/bans/456`, optionally with a query string). Lets callers
+    /// reach endpoints that don't yet have a dedicated variant without
+    /// editing this enum. Rate-limit bucketing still works because
+    /// `get_route_key` normalizes the path.
+    Custom(Cow<'a, str>),
     // Users
     /// Get current user
     GetMe,
@@ -483,6 +489,7 @@ impl<'a> Route<'a> {
     /// Returns the compiled path as a Cow<str>.
     pub fn path(&self) -> Cow<'_, str> {
         match self {
+            Route::Custom(path) => Cow::Owned(path.as_ref().trim_start_matches('/').to_string()),
             Route::GetMe | Route::UpdateMe => Cow::Borrowed("users/@me"),
             Route::SettingsProto { version } => Cow::Owned(format!("users/@me/settings-proto/{}", version)),
             Route::GetUserProfile { user_id, guild_id } => {

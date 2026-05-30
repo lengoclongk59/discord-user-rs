@@ -855,8 +855,14 @@ impl Gateway {
     // tune it without touching `Gateway` directly.
     async fn send_identify(writer: &Arc<RwLock<Option<WsWriter>>>, token: &str, status: UserStatus, capabilities: u32, intents: Option<u64>, large_threshold: u16, shard: Option<[u32; 2]>) -> Result<()> {
         let large_threshold = large_threshold.clamp(50, 250);
+        // Discord's gateway IDENTIFY expects the raw token in the `token`
+        // field — no `Bot ` / `Bearer ` prefix. The same token in
+        // `DiscordHttpClient` carries the prefix verbatim for the HTTP
+        // `Authorization` header (see `client::DiscordHttpClient::auth_header_value`),
+        // so we strip it here for the gateway payload only.
+        let identify_token = token.strip_prefix("Bot ").or_else(|| token.strip_prefix("Bearer ")).unwrap_or(token);
         let mut data = json!({
-            "token": token,
+            "token": identify_token,
             "capabilities": capabilities,
             "large_threshold": large_threshold,
             "properties": {
