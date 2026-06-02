@@ -114,7 +114,7 @@ impl WriteApi {
         if let Some(c) = content {
             body["content"] = json!(c);
         }
-        if !self.is_app_token() {
+        if !self.is_application_token() {
             body["mobile_network_type"] = json!("unknown");
         }
         if !files.is_empty() {
@@ -133,7 +133,7 @@ impl WriteApi {
     pub async fn compose_tts(&self, channel_id: &str, content: &str) -> Result<Value> {
         crate::cli::api::parse_snowflake(channel_id)?;
         let mut body = json!({ "content": content, "tts": true, "flags": 0 });
-        if !self.is_app_token() {
+        if !self.is_application_token() {
             body["mobile_network_type"] = json!("unknown");
         }
         self.raw()

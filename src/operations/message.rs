@@ -296,9 +296,14 @@ pub trait MessageOps: DiscordContext {
         let mut payload = json!({
             "content": content,
             "attachments": attachment_meta,
-            "flags": 0,
-            "mobile_network_type": "unknown"
+            "flags": 0
         });
+
+        // User-account tokens send `mobile_network_type: "unknown"` to mimic the
+        // mobile client; application (bot) tokens must omit it. See `send_message`.
+        if !self.http().is_application_token() {
+            payload["mobile_network_type"] = json!("unknown");
+        }
 
         if let Some(r) = reply {
             payload["message_reference"] = serde_json::to_value(r).unwrap_or_default();

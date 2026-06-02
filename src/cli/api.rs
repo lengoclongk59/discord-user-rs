@@ -674,7 +674,7 @@ impl WriteApi {
         opts.apply(&mut body);
         // User-account tokens mimic the mobile client; bot endpoints reject
         // this field (HTTP 403 code 40333). Mirror the library's split.
-        if !self.http.is_application_token() {
+        if !self.is_application_token() {
             body["mobile_network_type"] = serde_json::json!("unknown");
         }
         if let Some(mid) = reply_to {
@@ -708,7 +708,7 @@ impl WriteApi {
         parse_snowflake(channel_id)?;
         let mut body = serde_json::json!({ "content": content });
         opts.apply(&mut body);
-        if !self.is_app_token() {
+        if !self.is_application_token() {
             body["mobile_network_type"] = serde_json::json!("unknown");
         }
         if let Some(mid) = reply_to {
@@ -779,7 +779,7 @@ impl WriteApi {
             "flags": 8192,
             "attachments": [meta],
         });
-        if !self.is_app_token() {
+        if !self.is_application_token() {
             body["mobile_network_type"] = serde_json::json!("unknown");
         }
 
@@ -949,8 +949,10 @@ impl WriteApi {
     }
 
     /// `true` for `Bot `/`Bearer ` tokens — omit user-account fingerprint
-    /// fields (e.g. `mobile_network_type`) under these.
-    pub(crate) fn is_app_token(&self) -> bool {
+    /// fields (e.g. `mobile_network_type`) under these. `pub(crate)` so the
+    /// per-domain write modules in `cli/api_*.rs` can reach it (the underlying
+    /// [`WriteHttp`] method is private to this module).
+    pub(crate) fn is_application_token(&self) -> bool {
         self.http.is_application_token()
     }
 }

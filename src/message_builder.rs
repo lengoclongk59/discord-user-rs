@@ -276,9 +276,14 @@ impl<'a> MessageBuilder<'a> {
 
         let mut payload = json!({
             "tts": self.tts,
-            "flags": self.flags,
-            "mobile_network_type": "unknown"
+            "flags": self.flags
         });
+
+        // User-account tokens send `mobile_network_type: "unknown"` to mimic the
+        // mobile client; application (bot) tokens must omit it. See `send_message`.
+        if !self.http.is_application_token() {
+            payload["mobile_network_type"] = json!("unknown");
+        }
 
         if let Some(content) = self.content {
             payload["content"] = json!(content);
