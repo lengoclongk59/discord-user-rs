@@ -16,6 +16,65 @@ pub fn run(ctx: &Ctx, args: ExportArgs) -> Result<()> {
 
     let channel_id = resolve::resolve_channel_required(&db, &args.channel)?;
 
+    // Validate output path safety before any operations
+    if let Some(path) = &args.output {
+        use std::path::Component;
+        
+        // 1. Check for path traversal attempts
+        for component in path.components() {
+            if matches!(component, Component::ParentDir) {
+                anyhow::bail!("Path traversal not allowed: {}", path.display());
+            }
+        }
+        
+        // 2. Check if file exists and get confirmation
+        if path.exists() && !output::confirm(&format!("File {} exists. Overwrite?", path.display()))? {
+            output::dim("Aborted.");
+            return Ok(());
+        }
+        
+        // 3. Validate against restricted directories
+        // We check before opening to provide clear errors, then verify again after open
+        let check_restricted = |p: &std::path::Path| -> Result<()> {
+            let canonical = p.canonicalize().or_else(|_| {
+                // If file doesn't exist, canonicalize parent
+                p.parent()
+                    .and_then(|parent| parent.canonicalize().ok())
+                    .ok_or_else(|| anyhow::anyhow!("Cannot verify output path safety: {}", p.display()))
+            })?;
+            
+            #[cfg(unix)]
+            {
+                let canonical_str = canonical.to_str()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid path encoding"))?;
+                const RESTRICTED: &[&str] = &["/etc", "/sys", "/proc", "/boot", "/dev"];
+                for restricted in RESTRICTED {
+                    if canonical_str.starts_with(restricted) {
+                        anyhow::bail!("Cannot write to system directory: {}", canonical.display());
+                    }
+                }
+            }
+            
+            #[cfg(windows)]
+            {
+                let canonical_upper = canonical.to_string_lossy().to_uppercase();
+                const RESTRICTED: &[&str] = &[
+                    "C:\\WINDOWS", "C:\\SYSTEM32", "C:\\PROGRAM FILES",
+                    "C:\\PROGRAMDATA", "C:\\BOOT"
+                ];
+                for restricted in RESTRICTED {
+                    if canonical_upper.starts_with(restricted) {
+                        anyhow::bail!("Cannot write to system directory: {}", canonical.display());
+                    }
+                }
+            }
+            
+            Ok(())
+        };
+        
+        check_restricted(path)?;
+    }
+
     let msgs = db.recent(Some(&channel_id), args.hours, 100_000)?;
 
     if msgs.is_empty() {

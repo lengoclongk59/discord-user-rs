@@ -131,6 +131,28 @@ impl Db {
                     WHERE rowid NOT IN (SELECT rowid FROM messages_fts);",
             );
         }
+
+        if version < 4 {
+            // Performance indexes for common query patterns
+            c.execute_batch(
+                "BEGIN;
+                CREATE INDEX IF NOT EXISTS idx_messages_channel_timestamp ON messages(channel_id, timestamp);
+                CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);
+                CREATE INDEX IF NOT EXISTS idx_messages_guild_channel ON messages(guild_id, channel_id);
+                PRAGMA user_version = 4;
+                COMMIT;",
+            )?;
+        }
+
+        // Add performance PRAGMAs for better SQLite performance
+        c.execute_batch(
+            "PRAGMA synchronous = NORMAL;
+             PRAGMA cache_size = -64000;
+             PRAGMA temp_store = MEMORY;
+             PRAGMA mmap_size = 268435456;
+             PRAGMA busy_timeout = 5000;",
+        )?;
+
         Ok(())
     }
 
@@ -605,10 +627,11 @@ impl Db {
         hours: Option<i64>,
         by: &str,
     ) -> Result<Vec<(String, i64)>> {
-        let bucket_expr = if by == "hour" {
-            "substr(timestamp, 1, 13)"
-        } else {
-            "substr(timestamp, 1, 10)"
+        // Validate grouping parameter to prevent SQL injection
+        let bucket_expr = match by {
+            "hour" => "substr(timestamp, 1, 13)",
+            "day" => "substr(timestamp, 1, 10)",
+            _ => return Err(anyhow!("Invalid grouping '{}': must be 'hour' or 'day'", by)),
         };
 
         let mut sql = format!(

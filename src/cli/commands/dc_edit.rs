@@ -2,12 +2,17 @@
 
 use anyhow::Result;
 
-use crate::cli::api::WriteApi;
+use crate::cli::api::{parse_snowflake, validate_content, WriteApi};
 use crate::cli::commands::Ctx;
 use crate::cli::config;
 use crate::cli::output;
 
 pub async fn run(ctx: &Ctx, channel: &str, message: &str, content: &str) -> Result<()> {
+    // Validate inputs before making any network requests
+    parse_snowflake(channel)?;
+    parse_snowflake(message)?;
+    validate_content(content)?;
+    
     let token = config::resolve_token(ctx.token_flag.clone())?;
     let api = WriteApi::new(&token);
 

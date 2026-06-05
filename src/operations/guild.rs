@@ -313,8 +313,13 @@ pub trait GuildOps: DiscordContext {
             .await
     }
 
-    /// Get full guild members using "queryless search" scraping technique
-    async fn get_full_guild_members(&self, guild_id: &GuildId) -> Result<Vec<Member>> {
+    /// Get full guild members using "queryless search" scraping technique.
+    /// 
+    /// # Arguments
+    /// * `guild_id` - The guild to fetch members from
+    /// * `max_members` - Optional limit on total members to prevent OOM (default: 100,000)
+    async fn get_full_guild_members(&self, guild_id: &GuildId, max_members: Option<usize>) -> Result<Vec<Member>> {
+        let limit = max_members.unwrap_or(100_000);
         let mut all_members: Vec<Member> = Vec::new();
         let mut cursor: Option<(String, String)> = None; // (guild_joined_at, user_id)
 
@@ -347,13 +352,27 @@ pub trait GuildOps: DiscordContext {
 
             // Use the last member's joined_at + user_id as the pagination cursor
             if let Some(last) = members.last() {
-                let user_id = last.user.as_ref().map(|u| u.id.clone()).or_else(|| last.user_id.clone()).unwrap_or_default();
-                let joined_at = last.joined_at.clone().unwrap_or_default();
+                let user_id = last.user.as_ref()
+                    .map(|u| u.id.clone())
+                    .or_else(|| last.user_id.clone())
+                    .ok_or_else(|| crate::error::DiscordError::Other("Missing user_id in guild member pagination response".to_string()))?;
+                let joined_at = last.joined_at.clone()
+                    .ok_or_else(|| crate::error::DiscordError::Other("Missing joined_at in guild member pagination response".to_string()))?;
                 cursor = Some((joined_at, user_id));
             }
 
             let member_count = members.len();
             all_members.extend(members);
+            
+            // Circuit breaker: stop if we've reached the member limit
+            if all_members.len() >= limit {
+                tracing::warn!(
+                    "Reached member limit of {}, stopping pagination (guild may have more members)",
+                    limit
+                );
+                all_members.truncate(limit);
+                break;
+            }
 
             // If we got fewer than 100, we're done
             if member_count < 100 {
@@ -436,10 +455,12 @@ pub trait GuildOps: DiscordContext {
                 let done = members.len() < 100;
                 // Update cursor before consuming the page
                 if let Some(last) = members.last() {
-                    let user_id = last.user.as_ref().map(|u| u.id.clone())
+                    let user_id = last.user.as_ref()
+                        .map(|u| u.id.clone())
                         .or_else(|| last.user_id.clone())
-                        .unwrap_or_default();
-                    let joined_at = last.joined_at.clone().unwrap_or_default();
+                        .ok_or_else(|| crate::error::DiscordError::Other("Missing user_id in guild member pagination response".to_string()))?;
+                    let joined_at = last.joined_at.clone()
+                        .ok_or_else(|| crate::error::DiscordError::Other("Missing joined_at in guild member pagination response".to_string()))?;
                     cursor = Some((joined_at, user_id));
                 }
                 for member in members {

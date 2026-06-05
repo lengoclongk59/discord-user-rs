@@ -55,6 +55,74 @@ pub fn parse_snowflake(s: &str) -> Result<u64> {
         .with_context(|| format!("invalid snowflake id: {:?}", s))
 }
 
+/// Validate a message content string doesn't exceed Discord's limits.
+pub fn validate_content(content: &str) -> Result<()> {
+    const MAX_CONTENT_LEN: usize = 2000;
+    if content.len() > MAX_CONTENT_LEN {
+        return Err(anyhow!(
+            "Message content exceeds {MAX_CONTENT_LEN} characters ({} chars)",
+            content.len()
+        ));
+    }
+    Ok(())
+}
+
+/// Validate a file size doesn't exceed Discord's attachment limit.
+pub fn validate_file_size(path: &std::path::Path) -> Result<()> {
+    const MAX_FILE_SIZE: u64 = 25 * 1024 * 1024; // Discord's 25MB limit
+    let metadata = std::fs::metadata(path)
+        .with_context(|| format!("Cannot read file metadata: {}", path.display()))?;
+    if metadata.len() > MAX_FILE_SIZE {
+        return Err(anyhow!(
+            "File {} exceeds Discord's 25MB limit ({:.1} MB)",
+            path.display(),
+            metadata.len() as f64 / 1_048_576.0
+        ));
+    }
+    Ok(())
+}
+
+/// Validate emoji format (Unicode, custom emoji name:id, or animated a:name:id).
+pub fn validate_emoji(emoji: &str) -> Result<()> {
+    // Unicode emoji (typically 1-4 chars, but allow up to 20 for complex family emoji)
+    let char_count = emoji.chars().count();
+    if char_count <= 20 && !emoji.contains(':') {
+        return Ok(()); // Likely Unicode emoji
+    }
+    
+    // Custom emoji: name:id or a:name:id (animated)
+    let parts: Vec<&str> = emoji.split(':').collect();
+    match parts.len() {
+        2 => {
+            // Regular custom emoji: name:id
+            if !parts[0].is_empty() {
+                parse_snowflake(parts[1])?;
+                return Ok(());
+            }
+        }
+        3 if parts[0] == "a" => {
+            // Animated custom emoji: a:name:id
+            if !parts[1].is_empty() {
+                parse_snowflake(parts[2])?;
+                return Ok(());
+            }
+        }
+        _ => {}
+    }
+    
+    Err(anyhow!("Invalid emoji format: expected Unicode emoji, 'name:id', or 'a:name:id' (animated)"))
+}
+
+/// Validate a pagination limit is within reasonable bounds.
+pub fn validate_limit(limit: u32, max: u32) -> Result<u32> {
+    if limit > max {
+        tracing::warn!("Limit {} exceeds recommended maximum {}, capping", limit, max);
+        Ok(max)
+    } else {
+        Ok(limit)
+    }
+}
+
 /// Best-effort MIME type from a file extension, used when attaching files to
 /// outgoing messages. Falls back to `application/octet-stream` for anything
 /// unrecognized (Discord still accepts the upload).

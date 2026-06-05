@@ -199,9 +199,10 @@ impl Cache {
     /// (lazily evicted on access when `CacheSettings::time_to_live` is set).
     pub fn guild(&self, guild_id: &str) -> Option<Guild> {
         if let Some(ttl) = self.settings.time_to_live {
-            if let Some(ts) = self.guild_timestamps.get(guild_id) {
-                if ts.elapsed() > ttl {
-                    drop(ts);
+            // Atomic check: only remove if timestamp exists and is expired
+            if let Some(ts_ref) = self.guild_timestamps.get(guild_id) {
+                if ts_ref.elapsed() > ttl {
+                    drop(ts_ref);  // Release read lock before removal
                     self.guilds.remove(guild_id);
                     self.guild_timestamps.remove(guild_id);
                     return None;
@@ -241,9 +242,10 @@ impl Cache {
     /// (lazily evicted on access when `CacheSettings::time_to_live` is set).
     pub fn user(&self, user_id: &str) -> Option<User> {
         if let Some(ttl) = self.settings.time_to_live {
-            if let Some(ts) = self.user_timestamps.get(user_id) {
-                if ts.elapsed() > ttl {
-                    drop(ts);
+            // Atomic check: only remove if timestamp exists and is expired
+            if let Some(ts_ref) = self.user_timestamps.get(user_id) {
+                if ts_ref.elapsed() > ttl {
+                    drop(ts_ref);  // Release read lock before removal
                     self.users.remove(user_id);
                     self.user_timestamps.remove(user_id);
                     return None;

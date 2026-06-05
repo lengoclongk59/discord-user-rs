@@ -102,17 +102,23 @@ pub trait MessageOps: DiscordContext {
 
         let _msg: Message = self.http().post(crate::route::Route::CreateMessage { channel_id: channel_id.get() }, payload).await.with_context(|| format!("Failed to send RPC message to channel {}", channel_id.get()))?;
 
-        // Wait for response
-        let result = tokio::time::timeout(Duration::from_secs(timeout_secs), rx.recv()).await;
-
-        // Clean up listener (RAII - subscription dropped here)
+        // Wait for response with automatic subscription cleanup on timeout
+        let result = tokio::select! {
+            msg = rx.recv() => {
+                match msg {
+                    Some(response) => Ok(response),
+                    None => Err(DiscordError::Timeout),
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_secs(timeout_secs)) => {
+                Err(DiscordError::Timeout)
+            }
+        };
+        
+        // Subscription is automatically dropped here, cleaning up immediately
         drop(subscription);
-
-        match result {
-            Ok(Some(response)) => Ok(response),
-            Ok(None) => Err(DiscordError::Timeout),
-            Err(_) => Err(DiscordError::Timeout),
-        }
+        
+        result
     }
 
     /// Delete a message.

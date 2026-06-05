@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 
-use crate::cli::api::Api;
+use crate::cli::api::{validate_limit, Api};
 use crate::cli::commands::Ctx;
 use crate::cli::config;
 use crate::cli::db::Db;
@@ -14,6 +14,9 @@ use crate::cli::output;
 use crate::cli::types::ChannelContext;
 
 pub async fn run(ctx: &Ctx, channel: &str, limit: u32) -> Result<()> {
+    // Validate limit to prevent excessively long operations
+    let limit = validate_limit(limit, 100_000)?;
+    
     let token = config::resolve_token(ctx.token_flag.clone())?;
     let api = Api::new(&token);
     let mut db = Db::open(&ctx.db_path)?;

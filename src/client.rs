@@ -41,8 +41,9 @@ pub struct InvalidRequestTracker {
 
 impl InvalidRequestTracker {
     /// Record a new invalid response (401/403/429) and prune entries older
-    /// than `INVALID_REQUEST_WINDOW`. Returns the post-prune count.
-    pub async fn record(&self) -> usize {
+    /// than `INVALID_REQUEST_WINDOW`. Returns the post-prune count or
+    /// returns an error if the threshold is exceeded.
+    pub async fn record(&self) -> std::result::Result<usize, DiscordError> {
         let now = Instant::now();
         let mut guard = self.inner.write().await;
         // Prune entries older than the sliding window.
@@ -55,12 +56,15 @@ impl InvalidRequestTracker {
         }
         guard.push_back(now);
         let count = guard.len();
+        drop(guard);  // Release lock before any logging or error handling
+        
         if count >= INVALID_REQUEST_ERROR_THRESHOLD {
             tracing::error!(
                 invalid_request_count = count,
                 "invalid-request budget critical: Cloudflare 1015 IP ban imminent (>= {})",
                 INVALID_REQUEST_ERROR_THRESHOLD
             );
+            return Err(DiscordError::InvalidRequestThresholdReached { count });
         } else if count >= INVALID_REQUEST_WARN_THRESHOLD {
             tracing::warn!(
                 invalid_request_count = count,
@@ -68,7 +72,7 @@ impl InvalidRequestTracker {
                 INVALID_REQUEST_WARN_THRESHOLD
             );
         }
-        count
+        Ok(count)
     }
 
     /// Current count of invalid responses in the active 10-minute window.
@@ -207,7 +211,15 @@ impl Ratelimit {
         let reset_after = headers.get("x-ratelimit-reset-after").and_then(|h| h.to_str().ok()).and_then(|s| s.parse::<f64>().ok());
 
         if let (Some(remaining), Some(limit), Some(reset_at)) = (remaining, limit, reset_at) {
-            self.buckets.insert(route_key.to_string(), RatelimitingBucket { remaining, limit, reset_at, reset_after });
+            // Use entry API for atomic update to prevent race condition
+            self.buckets.entry(route_key.to_string())
+                .and_modify(|b| {
+                    b.remaining = remaining;
+                    b.limit = limit;
+                    b.reset_at = reset_at;
+                    b.reset_after = reset_after;
+                })
+                .or_insert_with(|| RatelimitingBucket { remaining, limit, reset_at, reset_after });
         }
     }
 
@@ -229,7 +241,15 @@ impl Ratelimit {
 
         let reset_at = headers.get("x-ratelimit-reset").and_then(|h| h.to_str().ok()).and_then(|s| s.parse::<f64>().ok()).unwrap_or_else(|| now + reset_after.unwrap_or(fallback_retry_after));
 
-        self.buckets.insert(route_key.to_string(), RatelimitingBucket { remaining, limit, reset_at, reset_after });
+        // Use entry API for atomic update to prevent race condition
+        self.buckets.entry(route_key.to_string())
+            .and_modify(|b| {
+                b.remaining = remaining;
+                b.limit = limit;
+                b.reset_at = reset_at;
+                b.reset_after = reset_after;
+            })
+            .or_insert_with(|| RatelimitingBucket { remaining, limit, reset_at, reset_after });
     }
 }
 
@@ -471,7 +491,7 @@ impl DiscordHttpClient {
                     }
                     if status.as_u16() == 429 {
                         // Cloudflare 1015 budget tracker.
-                        self.invalid_requests.record().await;
+                        self.invalid_requests.record().await?;
 
                         let info = Self::extract_rate_limit_info(response.headers());
                         if !self.ratelimiter_disabled {
@@ -483,7 +503,7 @@ impl DiscordHttpClient {
                         continue;
                     }
                     if status.as_u16() == 401 || status.as_u16() == 403 {
-                        self.invalid_requests.record().await;
+                        self.invalid_requests.record().await?;
                     }
                     let error_body = response.text().await.unwrap_or_default();
                     return Err(if status.is_server_error() { DiscordError::ServiceError { status: status.as_u16(), body: error_body } } else { DiscordError::UnexpectedStatusCode { status: status.as_u16(), body: error_body } });
@@ -536,7 +556,7 @@ impl DiscordHttpClient {
         }
         let code = status.as_u16();
         if code == 401 || code == 403 || code == 429 {
-            self.invalid_requests.record().await;
+            self.invalid_requests.record().await?;
             if code == 429 && !self.ratelimiter_disabled {
                 let info = Self::extract_rate_limit_info(response.headers());
                 self.ratelimit.record_429(&route_key, response.headers(), info.retry_after);
@@ -747,7 +767,7 @@ impl DiscordHttpClient {
                     if status.as_u16() == 429 {
                         // Cloudflare 1015 budget: 401 / 403 / 429 each
                         // count toward the 10k/10min ban window.
-                        self.invalid_requests.record().await;
+                        self.invalid_requests.record().await?;
 
                         let info = Self::extract_rate_limit_info(response.headers());
 
@@ -798,7 +818,7 @@ impl DiscordHttpClient {
                     // Cloudflare 1015 budget: track 401 / 403 alongside 429
                     // so callers can throttle voluntarily before the ban hits.
                     if status.as_u16() == 401 || status.as_u16() == 403 {
-                        self.invalid_requests.record().await;
+                        self.invalid_requests.record().await?;
                     }
 
                     // Parse error response body; if reading fails, surface the read error directly

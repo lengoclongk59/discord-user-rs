@@ -4,12 +4,16 @@ use std::io::{self, Write};
 
 use anyhow::Result;
 
-use crate::cli::api::WriteApi;
+use crate::cli::api::{parse_snowflake, WriteApi};
 use crate::cli::commands::Ctx;
 use crate::cli::config;
 use crate::cli::output;
 
 pub async fn run(ctx: &Ctx, channel: &str, message: &str, yes: bool) -> Result<()> {
+    // Validate inputs before making any network requests
+    parse_snowflake(channel)?;
+    parse_snowflake(message)?;
+    
     if !yes {
         print!(
             "Delete message {} in channel {}? Type 'yes' to confirm: ",

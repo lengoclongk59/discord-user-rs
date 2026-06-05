@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 
-use crate::cli::api::{parse_snowflake, MessageOptions, WriteApi};
+use crate::cli::api::{parse_snowflake, validate_content, validate_file_size, MessageOptions, WriteApi};
 use crate::cli::commands::Ctx;
 use crate::cli::config;
 use crate::cli::output;
@@ -18,6 +18,18 @@ pub async fn run(
     stickers: &[String],
     opts: MessageOptions,
 ) -> Result<()> {
+    // Validate inputs before making any network requests
+    parse_snowflake(channel)?;
+    if let Some(reply_id) = reply {
+        parse_snowflake(reply_id)?;
+    }
+    validate_content(content)?;
+    
+    // Validate file sizes
+    for file in files {
+        validate_file_size(file)?;
+    }
+    
     // Validate sticker constraints before making any network requests.
     if stickers.len() > 3 {
         bail!("at most 3 stickers may be attached per message (got {})", stickers.len());
