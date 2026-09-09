@@ -67,7 +67,7 @@ mod today;
 mod top;
 mod whoami;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
@@ -79,17 +79,44 @@ pub struct Ctx {
     pub json: bool,
 }
 
+/// The pre-0.6.2 default, kept only to recognise a stranded archive.
+const LEGACY_DB_NAME: &str = "discord.db";
+
 impl Ctx {
     fn from_cli(cli: &Cli) -> Self {
+        let db_path = match cli.db.clone() {
+            Some(p) => crate::cli::config::expand_tilde(p),
+            None => {
+                let p = crate::cli::config::default_db_path();
+                warn_stranded_legacy_archive(&p);
+                p
+            }
+        };
         Self {
             token_flag: cli.token.clone(),
-            db_path: cli
-                .db
-                .clone()
-                .unwrap_or_else(|| PathBuf::from("discord.db")),
+            db_path,
             json: cli.json,
         }
     }
+}
+
+/// Point out a `./discord.db` left over from when the default was CWD-relative.
+///
+/// Without this the archive simply reads as empty, with nothing on screen to
+/// explain why — the migration note lives in the README, which is not where
+/// anyone looks when `search` returns no rows.
+fn warn_stranded_legacy_archive(in_use: &Path) {
+    let legacy = Path::new(LEGACY_DB_NAME);
+    if !legacy.is_file() || in_use == legacy {
+        return;
+    }
+    crate::cli::output::warn(&format!(
+        "Ignoring ./{} — the default archive moved to {}. \
+         Move that file there, or pass --db ./{} (or set $DISCORD_DB) to keep using it.",
+        LEGACY_DB_NAME,
+        in_use.display(),
+        LEGACY_DB_NAME,
+    ));
 }
 
 pub async fn dispatch(cli: Cli) -> Result<()> {

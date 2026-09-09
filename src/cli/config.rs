@@ -1,6 +1,7 @@
-//! Token resolution chain and `.env` upsert.
+//! Token resolution chain, archive location, and `.env` upsert.
 
 use std::{
+    ffi::OsString,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -100,6 +101,65 @@ pub fn write_token_to_env(token: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Resolve the SQLite archive path when `--db` was not given:
+/// 1. `DISCORD_DB` env var
+/// 2. `<home>/.discord/discord.db`
+/// 3. `./discord.db` (only when the home directory cannot be determined)
+///
+/// Defaulting under `$HOME` keeps one archive for the user regardless of the
+/// working directory; the old CWD-relative default silently switched archives
+/// on every `cd`.
+pub fn default_db_path() -> PathBuf {
+    db_path_from(std::env::var_os("DISCORD_DB"), home_dir())
+}
+
+/// Pure core of [`default_db_path`], split out so it is testable without
+/// mutating process-wide environment state.
+fn db_path_from(env_db: Option<OsString>, home: Option<PathBuf>) -> PathBuf {
+    if let Some(p) = env_db.filter(|v| !v.is_empty()) {
+        return expand_tilde_with(PathBuf::from(p), home.as_deref());
+    }
+    match home {
+        Some(h) => h.join(".discord").join("discord.db"),
+        None => PathBuf::from("discord.db"),
+    }
+}
+
+/// Expand a leading `~` / `~/...` to the home directory.
+///
+/// A shell expands `~` before the value ever reaches us, but a quoted
+/// `--db '~/a.db'`, a `.env` line, or a systemd unit does not — and since
+/// [`crate::cli::db::Db::open`] creates missing parents, an unexpanded `~`
+/// would silently produce a directory literally named `~` in the CWD.
+///
+/// `~user` is deliberately left untouched: resolving another account's home
+/// needs a passwd lookup, and guessing it would point at the wrong archive.
+pub fn expand_tilde(path: PathBuf) -> PathBuf {
+    expand_tilde_with(path, home_dir().as_deref())
+}
+
+fn expand_tilde_with(path: PathBuf, home: Option<&Path>) -> PathBuf {
+    let Some(home) = home else { return path };
+    let Some(s) = path.to_str() else { return path };
+    if s == "~" {
+        return home.to_path_buf();
+    }
+    match s.strip_prefix("~/") {
+        // `~user/...` has no leading `~/`, so it falls through untouched.
+        Some(rest) => home.join(rest),
+        None => path,
+    }
+}
+
+/// The user's home directory, without pulling in a dependency for it.
+fn home_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    let raw = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"));
+    #[cfg(not(windows))]
+    let raw = std::env::var_os("HOME");
+    raw.filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
 /// Lightweight shape check shared across platform-specific token finders.
 /// Discord tokens look like `<base64-ish>.<base64-ish>.<base64-ish>` with
 /// total length 40–200 chars.
@@ -156,6 +216,72 @@ mod tests {
         // Total chars revealed should be exactly 8 (4 head + 4 tail).
         let revealed = masked.replace('…', "");
         assert_eq!(revealed.chars().count(), 8);
+    }
+
+    #[test]
+    fn db_path_prefers_env_override() {
+        let got = db_path_from(
+            Some(OsString::from("/tmp/other.db")),
+            Some(PathBuf::from("/home/u")),
+        );
+        assert_eq!(got, PathBuf::from("/tmp/other.db"));
+    }
+
+    #[test]
+    fn db_path_defaults_under_home() {
+        let got = db_path_from(None, Some(PathBuf::from("/home/u")));
+        assert_eq!(got, PathBuf::from("/home/u/.discord/discord.db"));
+    }
+
+    #[test]
+    fn db_path_ignores_empty_env_override() {
+        let got = db_path_from(Some(OsString::new()), Some(PathBuf::from("/home/u")));
+        assert_eq!(got, PathBuf::from("/home/u/.discord/discord.db"));
+    }
+
+    #[test]
+    fn db_path_falls_back_to_cwd_without_home() {
+        let got = db_path_from(None, None);
+        assert_eq!(got, PathBuf::from("discord.db"));
+    }
+
+    #[test]
+    fn db_path_expands_tilde_in_env_override() {
+        let got = db_path_from(
+            Some(OsString::from("~/archives/a.db")),
+            Some(PathBuf::from("/home/u")),
+        );
+        assert_eq!(got, PathBuf::from("/home/u/archives/a.db"));
+    }
+
+    #[test]
+    fn expand_tilde_leaves_other_paths_alone() {
+        let home = Path::new("/home/u");
+        // Bare `~` is the home directory itself.
+        assert_eq!(
+            expand_tilde_with(PathBuf::from("~"), Some(home)),
+            PathBuf::from("/home/u")
+        );
+        // `~user` needs a passwd lookup, so it stays literal.
+        assert_eq!(
+            expand_tilde_with(PathBuf::from("~root/a.db"), Some(home)),
+            PathBuf::from("~root/a.db")
+        );
+        // A `~` that is not leading is an ordinary character.
+        assert_eq!(
+            expand_tilde_with(PathBuf::from("/tmp/~/a.db"), Some(home)),
+            PathBuf::from("/tmp/~/a.db")
+        );
+        // Absolute and relative paths pass through.
+        assert_eq!(
+            expand_tilde_with(PathBuf::from("/tmp/a.db"), Some(home)),
+            PathBuf::from("/tmp/a.db")
+        );
+        // Without a home directory there is nothing to expand to.
+        assert_eq!(
+            expand_tilde_with(PathBuf::from("~/a.db"), None),
+            PathBuf::from("~/a.db")
+        );
     }
 
     #[test]
