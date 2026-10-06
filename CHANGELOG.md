@@ -76,6 +76,14 @@ observable timing for every current user. Plan and findings:
   first frame; `CompressionKind::Zstd` cannot decode any frame. Both are now
   documented on `CompressionKind`.
 
+### Fixed — CLI (`discord` binary)
+
+- `discord download` now treats `\` as a path separator on every platform
+  when it derives a local file name. On Linux and macOS an attachment named
+  `..\evil.exe` was saved under that literal name, backslash included: inside
+  the download directory, but a traversal for anything that later reads the
+  directory from Windows. It is now saved as `evil.exe`.
+
 ### Changed — CLI (`discord` binary)
 
 - **The local archive is now per-user, not per-directory.** With no `--db`, the

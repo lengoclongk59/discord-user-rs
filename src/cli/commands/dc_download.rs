@@ -175,12 +175,22 @@ pub async fn run(ctx: &Ctx, channel: &str, output_dir: &Path, hours: Option<i64>
 /// Reduce a possibly-arbitrary string to a safe local filename or reject.
 /// Strips path components, NUL bytes, trailing dots/spaces (Windows), caps
 /// length, and rejects Windows reserved device names.
+///
+/// Both `/` and `\` count as separators on every platform. `Path` only
+/// treats `\` as one on Windows, so on Unix `..\evil.exe` would otherwise
+/// survive as a single file name — harmless there, and a traversal the
+/// moment the download directory is read from Windows.
 fn safe_filename(input: &str) -> Option<String> {
-    if input.is_empty() {
+    let last = input
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()?;
+    if last.is_empty() {
         return None;
     }
-    // file_name() drops directory traversal and absolute components.
-    let raw: PathBuf = Path::new(input).file_name()?.into();
+    // file_name() rejects `.` / `..` and drops what only this platform's
+    // `Path` knows about (a Windows drive prefix such as `C:`).
+    let raw: PathBuf = Path::new(last).file_name()?.into();
     let s = raw.to_str()?.to_string();
     if s.contains('\0') || s.is_empty() {
         return None;
@@ -228,6 +238,30 @@ mod tests {
     fn rejects_traversal() {
         assert_eq!(safe_filename("../etc/passwd").as_deref(), Some("passwd"));
         assert_eq!(safe_filename("..\\evil.exe").as_deref(), Some("evil.exe"));
+    }
+
+    #[test]
+    fn backslash_is_a_separator_on_every_platform() {
+        assert_eq!(safe_filename("a\\b\\c.png").as_deref(), Some("c.png"));
+        assert_eq!(safe_filename("a/b\\c.png").as_deref(), Some("c.png"));
+        assert_eq!(safe_filename("a\\b/c.png").as_deref(), Some("c.png"));
+        assert_eq!(
+            safe_filename("C:\\Users\\x\\c.png").as_deref(),
+            Some("c.png")
+        );
+        assert_eq!(safe_filename("dir\\").as_deref(), Some("dir"));
+        assert_eq!(safe_filename("dir/").as_deref(), Some("dir"));
+    }
+
+    #[test]
+    fn rejects_names_that_are_only_traversal() {
+        assert!(safe_filename("..").is_none());
+        assert!(safe_filename("..\\..").is_none());
+        assert!(safe_filename("../..").is_none());
+        assert!(safe_filename("a\\..").is_none());
+        assert!(safe_filename(".").is_none());
+        assert!(safe_filename("/").is_none());
+        assert!(safe_filename("\\").is_none());
     }
 
     #[test]
