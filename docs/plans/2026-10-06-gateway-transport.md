@@ -137,8 +137,14 @@ socket. The endpoint is a `const &'static str` (`GATEWAY_URL`, `:31`), so there
 is also no way to point the gateway at a test server.
 
 **G-13. Compressed transports do not work.** `zlib-stream` is decoded per frame
-(`decompress_zlib`). That stream shares one inflate context across the
-connection, so per-frame decoding fails after the first frame. Selecting
+(`decompress_zlib`). That stream is not terminated at a frame boundary and
+shares one inflate context across the connection, so per-frame decoding is
+not reliable. Measured after 0.7.0 on a three-message sync-flushed stream: with
+`flate2` 1.1.9 (the version this checkout locks) the first two frames decode
+and the third, which refers back to them, decodes to corrupted text with no
+error; with `flate2` 1.1.10 every frame is rejected. `Cargo.lock` is not
+committed, so a dependent may get either. One shared inflater decodes all
+three under both. Selecting
 `CompressionKind::Zstd` is worse: it negotiates `zstd-stream`, and every binary
 frame, HELLO included, is then fed to the zlib decoder and dropped with a
 warning, so the connection never identifies. This is out of scope, because

@@ -72,9 +72,11 @@ observable timing for every current user. Plan and findings:
 ### Known limitations
 
 - Compressed transports do not work. `CompressionKind::Zlib` negotiates
-  nothing, and a `zlib-stream` requested through `with_url` fails after the
-  first frame; `CompressionKind::Zstd` cannot decode any frame. Both are now
-  documented on `CompressionKind`.
+  nothing, and a `zlib-stream` requested through `with_url` is not decoded
+  reliably: depending on the `flate2` version, a frame is rejected or, once it
+  refers back to earlier frames, decodes to corrupted text.
+  `CompressionKind::Zstd` cannot decode any frame. Both are now documented on
+  `CompressionKind`, and a test pins the `zlib-stream` behaviour.
 
 ### Fixed — CLI (`discord` binary)
 

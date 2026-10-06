@@ -69,9 +69,12 @@ pub enum CompressionKind {
     /// Meant to negotiate `?compress=zlib-stream`. It currently connects to
     /// the same URL as [`CompressionKind::None`], so nothing is negotiated.
     /// If `zlib-stream` is requested anyway (through [`Gateway::with_url`]),
-    /// every frame after the first fails to decode, because the stream shares
-    /// one inflate context across the connection and frames are inflated one
-    /// at a time.
+    /// frames are not decoded reliably: the stream is not terminated at a
+    /// frame boundary and shares one inflate context across the connection,
+    /// while frames are inflated one at a time. What happens to a frame
+    /// depends on the `flate2` version. With 1.1.9 the first frame decodes and
+    /// a later frame that refers back to earlier ones decodes to corrupted
+    /// text without an error; with 1.1.10 every frame is rejected.
     Zlib,
     /// Negotiates `?compress=zstd-stream`, but no zstd decoder exists: every
     /// binary frame, HELLO included, is fed to the zlib decoder and dropped,
@@ -932,6 +935,57 @@ impl Drop for Gateway {
     fn drop(&mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.try_send(());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use flate2::{write::ZlibEncoder, Compress, Compression, Decompress, FlushDecompress};
+
+    use super::*;
+
+    /// Messages compressed the way `zlib-stream` does it: one stream for the
+    /// connection, sync-flushed after each message.
+    fn zlib_stream_frames(messages: &[&str]) -> Vec<Vec<u8>> {
+        let mut encoder = ZlibEncoder::new_with_compress(Vec::new(), Compress::new(Compression::default(), true));
+        let mut frames = Vec::new();
+        let mut seen = 0;
+        for message in messages {
+            encoder.write_all(message.as_bytes()).unwrap();
+            encoder.flush().unwrap();
+            frames.push(encoder.get_ref()[seen..].to_vec());
+            seen = encoder.get_ref().len();
+        }
+        frames
+    }
+
+    /// Pins the limitation documented on [`CompressionKind`]. A real
+    /// `zlib-stream` decoder replaces `decompress_zlib` and flips this test.
+    ///
+    /// Only the last frame is asserted on. It repeats text from the frames
+    /// before it, so it is encoded as references into them, and no `flate2`
+    /// version can rebuild it alone: 1.1.9 returns corrupted text, 1.1.10 an
+    /// error. The earlier frames decode under one version and not the other.
+    #[test]
+    fn zlib_stream_frames_do_not_decode_one_at_a_time() {
+        let messages = [r#"{"op":10,"d":{"heartbeat_interval":41250}}"#, r#"{"op":0,"t":"READY","s":1,"d":{"session_id":"abc"}}"#, r#"{"op":0,"t":"MESSAGE_CREATE","s":2,"d":{"session_id":"abc"}}"#];
+        let frames = zlib_stream_frames(&messages);
+
+        for (i, frame) in frames.iter().enumerate() {
+            assert!(frame.ends_with(&[0x00, 0x00, 0xff, 0xff]), "frame {i} ends at a sync flush");
+        }
+        assert_ne!(Gateway::decompress_zlib(&frames[2]).ok().as_deref(), Some(messages[2]), "a frame that refers back to earlier frames decoded on its own");
+
+        // The same frames decode with one inflater kept across them, which is
+        // what the transport requires.
+        let mut inflater = Decompress::new(true);
+        for (frame, message) in frames.iter().zip(messages) {
+            let mut out = Vec::with_capacity(1024);
+            inflater.decompress_vec(frame, &mut out, FlushDecompress::Sync).unwrap();
+            assert_eq!(String::from_utf8(out).unwrap(), message);
         }
     }
 }
