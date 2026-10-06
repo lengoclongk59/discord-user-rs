@@ -322,6 +322,23 @@ async fn non_resumable_op_9_identifies_after_the_jittered_wait() {
     gw.disconnect().await;
 }
 
+#[tokio::test]
+async fn heartbeat_request_is_answered_without_waiting_for_the_interval() {
+    let server = Server::bind().await;
+    let (mut gw, _rx, mut conn) = start(&server).await;
+    conn.identify_and_ready("sess-1", "ws://127.0.0.1:9").await;
+    conn.dispatch("MESSAGE_CREATE", 9, json!({})).await;
+
+    // The interval is a minute, so only the request can explain a heartbeat.
+    conn.send(json!({ "op": 1, "d": null })).await;
+    let asked = Instant::now();
+    let beat = conn.recv_op(1).await;
+    assert!(asked.elapsed() < Duration::from_millis(500), "heartbeat after {:?}", asked.elapsed());
+    assert_eq!(beat["d"], 9);
+
+    gw.disconnect().await;
+}
+
 // ── Phase 3: caller hooks and the ordered event stream ──
 
 async fn next_gateway_event(events: &mut GatewayEvents) -> GatewayEvent {

@@ -280,6 +280,18 @@ impl GatewayCore {
                     self.on_dispatch(event_type, payload.d, &mut actions);
                 }
             }
+            Opcode::Heartbeat => {
+                // Discord may ask for a heartbeat ahead of schedule and
+                // expects it at once.
+                debug!("Gateway requested a heartbeat (op 1)");
+                actions.push(self.beat(now));
+                // That beat stands in for the next scheduled one. Restarting
+                // the schedule also gives its ACK a full interval to arrive
+                // before the zombie check looks for it.
+                if self.next_heartbeat.is_some() {
+                    self.next_heartbeat = Some(now + self.heartbeat_interval);
+                }
+            }
             Opcode::Reconnect => {
                 warn!("Received reconnect request (op 7)");
                 actions.push(Action::Reconnect { cause: ReconnectCause::Resume, reason: "op 7 reconnect" });
@@ -377,14 +389,19 @@ impl GatewayCore {
                     warn!("Previous heartbeat was never acknowledged; treating the connection as a zombie");
                     return vec![Action::Reconnect { cause: ReconnectCause::Failure, reason: "heartbeat not acknowledged" }];
                 }
-                actions.push(Action::Send(json!({ "op": 1, "d": self.seq }).to_string()));
-                self.last_heartbeat_sent = Some(now);
-                self.awaiting_ack = true;
+                actions.push(self.beat(now));
                 let next = due + self.heartbeat_interval;
                 self.next_heartbeat = Some(if next > now { next } else { now + self.heartbeat_interval });
             }
         }
         actions
+    }
+
+    /// A heartbeat carrying the latest sequence, recorded as awaiting its ACK.
+    fn beat(&mut self, now: Instant) -> Action {
+        self.last_heartbeat_sent = Some(now);
+        self.awaiting_ack = true;
+        Action::Send(json!({ "op": 1, "d": self.seq }).to_string())
     }
 
     /// RESUME when a session is held, IDENTIFY otherwise.
@@ -606,6 +623,39 @@ mod tests {
             assert!(sends_op(&actions[0], 1), "beat {beat}: {actions:?}");
             frame(&mut core, &ack(), at + ms(30), 0.5);
         }
+    }
+
+    #[test]
+    fn heartbeat_request_is_answered_at_once_and_restarts_the_schedule() {
+        let (mut core, t0) = after_hello(1_000);
+        frame(&mut core, &dispatch("MESSAGE_CREATE", 7, json!({})), t0, 0.5);
+        let actions = frame(&mut core, &json!({ "op": 1, "d": null }).to_string(), t0 + ms(300), 0.5);
+        assert_eq!(actions, vec![Action::Send(json!({ "op": 1, "d": 7 }).to_string())]);
+        frame(&mut core, &ack(), t0 + ms(330), 0.5);
+        assert_eq!(core.latency(), Some(ms(30)));
+        // The beat just sent replaces the one that was due at 1000 ms.
+        assert!(core.tick(t0 + ms(1_000), 0.5).is_empty());
+        assert!(sends_op(&core.tick(t0 + ms(1_300), 0.5)[0], 1));
+    }
+
+    #[test]
+    fn heartbeat_request_just_before_a_tick_is_not_a_zombie() {
+        let (mut core, t0) = after_hello(1_000);
+        assert_eq!(frame(&mut core, &json!({ "op": 1 }).to_string(), t0 + ms(990), 0.5).len(), 1);
+        // The scheduled tick lands before the ACK of the requested beat can.
+        assert!(core.tick(t0 + ms(1_000), 0.5).is_empty());
+        frame(&mut core, &ack(), t0 + ms(1_020), 0.5);
+        assert!(sends_op(&core.tick(t0 + ms(1_990), 0.5)[0], 1));
+    }
+
+    #[test]
+    fn heartbeat_request_before_hello_starts_no_schedule() {
+        let t0 = Instant::now();
+        let mut core = GatewayCore::new(URL.to_string(), "tok".to_string());
+        core.opened(t0);
+        let actions = frame(&mut core, &json!({ "op": 1 }).to_string(), t0, 0.5);
+        assert_eq!(actions, vec![Action::Send(json!({ "op": 1, "d": null }).to_string())]);
+        assert_eq!(core.next_heartbeat, None);
     }
 
     #[test]

@@ -40,6 +40,9 @@ observable timing for every current user. Plan and findings:
   writer outlived the supervisor. The writer is now cleared.
 - RESUME strips a `Bot ` / `Bearer ` prefix from the token, as IDENTIFY
   already did.
+- A heartbeat request from Discord (op 1) is answered at once. It used to be
+  ignored until the next scheduled heartbeat. The schedule restarts from the
+  requested beat.
 - The synthetic `CACHE_READY` dispatch now follows the event that completes
   the cache (READY with no guilds, or the last `GUILD_CREATE`). It used to be
   sent just before that event, so a subscriber heard "ready" before the last
