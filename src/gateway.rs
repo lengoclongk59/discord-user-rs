@@ -18,6 +18,9 @@ use tokio::{
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage, MaybeTlsStream, WebSocketStream};
 use tracing::{error, info, warn};
 
+/// The future type returned by the asynchronous [`GatewayHooks`] methods.
+pub use futures::future::BoxFuture;
+
 pub use self::hooks::{default_close_verdict, CloseVerdict, DefaultHooks, GatewayHooks, IdentifyDefaults};
 pub use self::machine::{plan_reconnect, ReconnectCause, BACKOFF_MAX, BACKOFF_MIN, FAST_RECONNECT, INVALID_SESSION_MAX, INVALID_SESSION_MIN};
 use self::machine::{Action, GatewayCore};
@@ -53,18 +56,26 @@ const DEFAULT_LARGE_THRESHOLD: u16 = 50;
 /// Compression flavour negotiated for the gateway connection.
 ///
 /// Discord supports raw JSON, `zlib-stream`, and `zstd-stream` transports.
-/// Zlib is handled inline via [`Gateway::decompress_zlib`]; zstd decoding
-/// is not yet wired up — selecting [`CompressionKind::Zstd`] only flips
-/// the URL query parameter so the negotiation is visible to Discord.
+/// **Only [`CompressionKind::None`] works today.** Binary frames are decoded
+/// one at a time with a fresh zlib inflater, which suits neither stream
+/// transport: both share one decoder context across the whole connection.
+/// A correct decoder is not yet implemented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CompressionKind {
     /// No compression negotiated at the URL level (zlib payloads may still
     /// arrive as binary frames and are decoded best-effort).
     #[default]
     None,
-    /// Negotiate `?compress=zlib-stream` (handled in-process today).
+    /// Meant to negotiate `?compress=zlib-stream`. It currently connects to
+    /// the same URL as [`CompressionKind::None`], so nothing is negotiated.
+    /// If `zlib-stream` is requested anyway (through [`Gateway::with_url`]),
+    /// every frame after the first fails to decode, because the stream shares
+    /// one inflate context across the connection and frames are inflated one
+    /// at a time.
     Zlib,
-    /// Negotiate `?compress=zstd-stream` (URL-only; decoder TODO).
+    /// Negotiates `?compress=zstd-stream`, but no zstd decoder exists: every
+    /// binary frame, HELLO included, is fed to the zlib decoder and dropped,
+    /// so the connection never identifies. Do not use.
     Zstd,
 }
 
@@ -211,8 +222,8 @@ pub struct Gateway {
     /// to decide whether a guild's full member list is delivered in
     /// GUILD_CREATE or must be requested via opcode 8.
     large_threshold: u16,
-    /// Negotiated transport compression flavour. Currently only changes the
-    /// gateway URL; zstd payload decoding is a future task.
+    /// Negotiated transport compression flavour. Only changes the gateway
+    /// URL; see [`CompressionKind`] for what does not work yet.
     compression_kind: CompressionKind,
     /// Optional `[shard_id, shard_count]` array sent in IDENTIFY. Discord requires
     /// sharding once a bot reaches 2 500 guilds and may force-close with code 4011.
@@ -288,8 +299,8 @@ impl Gateway {
 
     /// Select the transport compression flavour used when (re)connecting.
     ///
-    /// Today only changes the gateway URL query parameter; zstd payload
-    /// decoding is implemented in a follow-up task.
+    /// Only changes the gateway URL query parameter. Neither compressed
+    /// transport decodes correctly yet; see [`CompressionKind`].
     pub fn with_compression(mut self, kind: CompressionKind) -> Self {
         self.compression_kind = kind;
         self

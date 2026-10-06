@@ -158,6 +158,45 @@ fn identify_payload(token: &str, status: UserStatus, capabilities: u32, intents:
 /// Every method has a default that reproduces the library's behaviour. The
 /// supervisor calls the hooks from its own task, so a slow hook delays the
 /// connection it is deciding about, and nothing else.
+///
+/// ```no_run
+/// use std::sync::Arc;
+///
+/// use discord_user::gateway::{default_close_verdict, BoxFuture, CloseVerdict, FrameBuffer, Gateway, GatewayEvent, GatewayHooks};
+/// use discord_user::UserStatus;
+///
+/// /// Re-reads the token on every connect, and asks for a fresh one after a
+/// /// 4004 instead of stopping.
+/// struct EnvToken;
+///
+/// impl GatewayHooks for EnvToken {
+///     fn token<'a>(&'a self, _configured: &'a str) -> BoxFuture<'a, Option<String>> {
+///         Box::pin(async { std::env::var("DISCORD_TOKEN").ok() })
+///     }
+///
+///     fn on_close(&self, code: Option<u16>, _reason: &str) -> CloseVerdict {
+///         match code {
+///             Some(4004) => CloseVerdict::Identify,
+///             other => default_close_verdict(other),
+///         }
+///     }
+/// }
+///
+/// # async fn run() -> discord_user::Result<()> {
+/// let (gateway, _dispatches) = Gateway::new(String::new(), UserStatus::Online, 256);
+/// let mut gateway = gateway.with_hooks(Arc::new(EnvToken));
+/// let mut events = gateway.frames(FrameBuffer::Bounded(4096)).expect("first call");
+/// gateway.connect().await?;
+/// while let Some(event) = events.recv().await {
+///     match event {
+///         GatewayEvent::Frame { op, s, raw, .. } => println!("op {op} s {s:?}: {} bytes", raw.len()),
+///         GatewayEvent::Status { status, detail } => println!("{status:?} {detail:?}"),
+///         GatewayEvent::Lagged { dropped } => eprintln!("dropped {dropped} events"),
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
 pub trait GatewayHooks: Send + Sync + 'static {
     /// The credential for the next connection, asked for before every
     /// connect. `configured` is the token the gateway was built with.

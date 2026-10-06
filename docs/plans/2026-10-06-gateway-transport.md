@@ -1,7 +1,9 @@
 # Plan: make `Gateway` usable as an embedded transport
 
-Status: proposed, 2026-10-06. Nothing in this plan has been implemented.
-Revised the same day after a review against the source.
+Status: implemented, 2026-10-06, as 0.7.0 (phases 1–5 are one commit each,
+from `test(gateway): extract a sans-IO core` onwards). Revised the same day
+after a review against the source, before implementation. Where the code
+differs from the text below, see "Implementation notes" at the end.
 
 ## Goal
 
@@ -355,4 +357,42 @@ rule and the subscription flags in TypeScript as a `CloseVerdict` callback.
    server that closes right after acknowledging would still defeat it.
 5. Should `Frame` events also cover outbound frames (IDENTIFY, RESUME,
    heartbeats, op 8) for the recorder? If so, IDENTIFY and RESUME carry the
-   token and must be redacted before they are emitted.
+   token and must be redacted before they are emitted. 0.7.0 emits inbound
+   frames only.
+
+## Implementation notes
+
+What shipped differs from the design above in these places:
+
+- **Core interface.** `GatewayCore` (`src/gateway/machine.rs`) exposes
+  methods rather than an input enum: `opened`, `frame`, `tick`,
+  `connection_lost`, `set_token`, `reconnect_delay`, `next_deadline`. The
+  read timeout is one of the core's deadlines, checked on `tick`, not a
+  `ReadTimeout` input. Close frames and transport errors are handled by the
+  supervisor, which consults `on_close` and then calls `connection_lost`.
+  Two extra actions, `Received` and `Live`, feed the event stream, so a raw
+  frame always precedes the status change it causes.
+- **Hook shapes.** `identify` returns a `BoxFuture<Value>` and receives
+  `IdentifyDefaults`, because the default body may fetch the client build
+  number. `token` receives the token the gateway was built with. `BoxFuture`
+  is re-exported from `discord_user::gateway`.
+- **Causes.** A missed heartbeat ACK and transport errors use the `Failure`
+  cause (the ladder), matching `fms-dash`. Close 4008 maps to `Retry`.
+- **Test timing.** Timing is tested on the core with injected instants, so
+  `tokio::time::pause()` and the `test-util` feature were not needed. The
+  loopback tests use real time with short heartbeat intervals; the suite
+  takes about three seconds.
+- **Phase order.** `AuthFailed` and `Stopped` are tested in phase 3, because
+  the event stream does not exist in phase 2. Phase 2 covers the cleared
+  writer (`is_connected()`).
+- **Release.** Phase 5 bumps the version to 0.7.0 and writes the CHANGELOG.
+  It does not tag: a `v*` tag triggers `release.yml`, which publishes to
+  crates.io.
+- **Gate.** At `0ad9f03` the repository-wide gate was already red, in files
+  this plan does not touch: `cargo fmt --check` (717 hunks; the code was
+  formatted with an uncommitted `max_width = 250`,
+  `use_small_heuristics = "Max"` config), `cargo clippy -- -D warnings`
+  (13 lints), and `dc_download::tests::rejects_traversal`. Each phase was
+  therefore gated on its own files: gateway files formatted with the
+  module's existing 250 / Max style, no clippy warning in a touched file,
+  and every other test passing, with and without `--cfg tokio_unstable`.

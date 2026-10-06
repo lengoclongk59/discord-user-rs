@@ -7,6 +7,7 @@ A Discord self-bot client library for Rust. Connects to Discord as a **user acco
 ## Features
 
 - WebSocket gateway connection with automatic reconnection
+- Embeddable gateway: caller hooks for credentials, IDENTIFY, close policy and reconnect pacing, plus an ordered stream of raw frames (`Gateway::with_hooks`, `Gateway::frames`)
 - Rate-limit-aware HTTP client
 - Typed event system with RAII subscription guards
 - Message, relationship, channel, guild, and status operations
@@ -20,7 +21,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-discord-user-rs = "0.6"
+discord-user-rs = "0.7"
 tokio = { version = "1", features = ["full"] }
 ```
 

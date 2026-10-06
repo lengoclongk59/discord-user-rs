@@ -232,9 +232,9 @@ async fn session_ending_close_reconnects_with_identify() {
 
     conn.close(4009).await;
 
-    // The session is gone, so the reconnect returns to the base URL.
-
-    let mut conn = server.accept().await;
+    // The session is gone, so the reconnect returns to the base URL, after
+    // the 1-5 s IDENTIFY window.
+    let mut conn = server.accept_within(Duration::from_secs(8)).await.expect("no re-IDENTIFY");
     conn.hello(QUIET_INTERVAL_MS).await;
     let identify = conn.recv_op(2).await;
     assert_eq!(identify["d"]["token"], TOKEN);
@@ -311,9 +311,11 @@ async fn non_resumable_op_9_identifies_after_the_jittered_wait() {
     conn.send(json!({ "op": 9, "d": false })).await;
     let sent = Instant::now();
 
-    let mut conn = server.accept().await;
+    // The jittered window runs to 5 s, as long as the default accept wait,
+    // so this accept allows for the whole window.
+    let mut conn = server.accept_within(Duration::from_secs(8)).await.expect("no re-IDENTIFY");
     let waited = sent.elapsed();
-    assert!(waited >= Duration::from_millis(950), "re-identified after {waited:?}");
+    assert!(waited >= Duration::from_millis(950) && waited < Duration::from_millis(5_500), "re-identified after {waited:?}");
     conn.hello(QUIET_INTERVAL_MS).await;
     conn.recv_op(2).await;
 
