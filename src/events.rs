@@ -9,6 +9,24 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use dashmap::{DashMap, DashSet};
 use serde_json::Value;
 
+/// Spawn a listener callback on its own task.
+///
+/// Under `--cfg tokio_unstable` (this repository's `.cargo/config.toml`) the
+/// task is named, so it shows up in tokio-console. A dependent crate does not
+/// inherit that flag, and `tokio::task::Builder` does not exist without it, so
+/// everywhere else this is a plain `tokio::spawn`.
+fn spawn_listener(name: &str, task: impl std::future::Future<Output = ()> + Send + 'static) {
+    #[cfg(tokio_unstable)]
+    {
+        let _ = tokio::task::Builder::new().name(name).spawn(task);
+    }
+    #[cfg(not(tokio_unstable))]
+    {
+        let _ = name;
+        tokio::spawn(task);
+    }
+}
+
 /// A dispatch event from the gateway.
 ///
 /// `seq` is a process-wide monotonic counter assigned at gateway-read time
@@ -269,7 +287,7 @@ impl EventEmitter {
             for listener in listeners {
                 let ev = event.clone();
                 let task_name = format!("dispatch::event_handler::{}", event_type);
-                let _ = tokio::task::Builder::new().name(&task_name).spawn(async move {
+                spawn_listener(&task_name, async move {
                     (listener.callback)(ev);
                 });
             }
@@ -279,7 +297,7 @@ impl EventEmitter {
         let any_listeners = self.any_events.read().unwrap_or_else(|e| e.into_inner()).clone();
         for listener in any_listeners {
             let ev = event.clone();
-            let _ = tokio::task::Builder::new().name("dispatch::event_handler::any").spawn(async move {
+            spawn_listener("dispatch::event_handler::any", async move {
                 (listener.callback)(ev);
             });
         }
@@ -289,7 +307,7 @@ impl EventEmitter {
             let unhandled_listeners = self.unhandled_events.read().unwrap_or_else(|e| e.into_inner()).clone();
             for listener in unhandled_listeners {
                 let ev = event.clone();
-                let _ = tokio::task::Builder::new().name("dispatch::event_handler::unhandled").spawn(async move {
+                spawn_listener("dispatch::event_handler::unhandled", async move {
                     (listener.callback)(ev);
                 });
             }

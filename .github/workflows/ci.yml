@@ -41,6 +41,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --all-targets --all-features
 
+  dependent:
+    name: builds as a dependency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # The crate lives outside the checkout, so this repository's
+      # .cargo/config.toml (which sets --cfg tokio_unstable) does not apply,
+      # exactly as for a crate that depends on this one.
+      - name: Check a dependent crate created outside the repository
+        run: |
+          dep="$RUNNER_TEMP/dependent"
+          cargo new --quiet --vcs none "$dep"
+          cd "$dep"
+          cargo add --quiet --path "$GITHUB_WORKSPACE"
+          cargo check
+
   test:
     name: cargo test
     runs-on: ubuntu-latest
