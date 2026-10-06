@@ -18,7 +18,7 @@ use tokio::{
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage, MaybeTlsStream, WebSocketStream};
 use tracing::{error, info, warn};
 
-use self::machine::{Action, GatewayCore, ReconnectCause};
+use self::machine::{gateway_token, plan_reconnect, Action, GatewayCore, ReconnectCause};
 use crate::{
     error::Result,
     events::DispatchEvent,
@@ -178,11 +178,11 @@ fn classify_close(code: Option<u16>) -> GatewayLoopOutcome {
         Some(4004) => GatewayLoopOutcome::Fatal { code: 4004, reason: "Authentication failed" },
         // 4005 Already authenticated — odd state but the session is still valid.
         Some(4005) => GatewayLoopOutcome::Reconnect(ReconnectCause::Resume),
-        // 4007 Invalid seq, 4008 Rate limited, 4009 Session timed out.
-        // 4008 is recoverable per docs but a Reconnect-with-backoff is appropriate;
-        // the supervisor's outer reconnect loop already applies backoff on connect failure.
-        Some(4008) => GatewayLoopOutcome::Reconnect(ReconnectCause::Resume),
-        // Invalid seq / session timed out — session is unrecoverable, force re-IDENTIFY.
+        // 4008 Rate limited — the session survives, but the reconnect waits the
+        // backoff ladder rather than the fast RESUME floor.
+        Some(4008) => GatewayLoopOutcome::Reconnect(ReconnectCause::Failure),
+        // 4007 Invalid seq, 4009 Session timed out — the session is
+        // unrecoverable, force re-IDENTIFY.
         Some(4007 | 4009) => GatewayLoopOutcome::Reconnect(ReconnectCause::Identify),
         Some(4010) => GatewayLoopOutcome::Fatal { code: 4010, reason: "Invalid shard" },
         Some(4011) => GatewayLoopOutcome::Fatal { code: 4011, reason: "Sharding required" },
@@ -288,16 +288,6 @@ fn identify_payload(token: &str, status: UserStatus, capabilities: u32, intents:
     }
 
     data
-}
-
-/// The token as the gateway expects it.
-///
-/// Discord's gateway expects the raw token — no `Bot ` / `Bearer ` prefix. The
-/// same token in `DiscordHttpClient` carries the prefix verbatim for the HTTP
-/// `Authorization` header (see `client::DiscordHttpClient::auth_header_value`),
-/// so it is stripped here for gateway payloads only.
-fn gateway_token(token: &str) -> &str {
-    token.strip_prefix("Bot ").or_else(|| token.strip_prefix("Bearer ")).unwrap_or(token)
 }
 
 async fn send_text(writer: &Arc<RwLock<Option<WsWriter>>>, text: String) -> Result<()> {
@@ -724,16 +714,13 @@ impl Supervisor {
         // The first iteration uses the reader from the initial connect();
         // subsequent iterations re-establish the WebSocket here.
         let mut current_reader: Option<WsReader> = Some(initial_reader);
-        let mut backoff_secs: u64 = 1;
-        const MAX_BACKOFF_SECS: u64 = 60;
-        const RECONNECT_PAUSE: Duration = Duration::from_millis(500);
 
         'supervisor: loop {
-            // ── 1. Acquire a reader: initial, or reconnect with backoff ──
+            // ── 1. Acquire a reader: initial, or a reconnect ──
             let mut reader = match current_reader.take() {
                 Some(r) => r,
                 None => {
-                    info!(backoff_secs, "Reconnecting to Discord gateway…");
+                    info!("Reconnecting to Discord gateway…");
                     self.core.connecting();
                     self.publish();
                     // Drop any stale writer before opening a new socket.
@@ -744,17 +731,16 @@ impl Supervisor {
                             let (w, r) = ws_stream.split();
                             *self.writer.write().await = Some(w);
                             info!("Gateway reconnected successfully");
-                            backoff_secs = 1;
                             self.core.opened(Instant::now());
                             r
                         }
                         Err(e) => {
-                            error!(error = %e, backoff_secs, "Gateway reconnect failed; sleeping before retry");
+                            let wait = self.core.reconnect_delay(ReconnectCause::Failure, rand::random(), plan_reconnect);
+                            error!(error = %e, ?wait, "Gateway reconnect failed; waiting before retry");
                             tokio::select! {
                                 _ = shutdown_rx.recv() => break 'supervisor,
-                                _ = tokio::time::sleep(Duration::from_secs(backoff_secs)) => {}
+                                _ = tokio::time::sleep(wait) => {}
                             }
-                            backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
                             continue 'supervisor;
                         }
                     }
@@ -765,7 +751,7 @@ impl Supervisor {
             let outcome = self.read_connection(&mut reader, &mut shutdown_rx).await;
 
             // ── 3. Decide what to do next ──
-            match outcome {
+            let cause = match outcome {
                 GatewayLoopOutcome::Shutdown => {
                     self.core.connection_lost(false);
                     break 'supervisor;
@@ -773,24 +759,25 @@ impl Supervisor {
                 GatewayLoopOutcome::Fatal { code, reason } => {
                     error!(close_code = code, reason, "Gateway closed with fatal code; not reconnecting");
                     self.core.connection_lost(false);
+                    // Nothing will write to this socket again, and
+                    // `is_connected()` reads the writer.
+                    *self.writer.write().await = None;
                     break 'supervisor;
                 }
-                GatewayLoopOutcome::Reconnect(ReconnectCause::Identify) => {
-                    self.core.connection_lost(true);
-                    info!("Clearing session state; will re-identify on reconnect");
+                GatewayLoopOutcome::Reconnect(cause) => {
+                    self.core.connection_lost(cause == ReconnectCause::Identify);
+                    cause
                 }
-                GatewayLoopOutcome::Reconnect(_) => {
-                    self.core.connection_lost(false);
-                    info!("Gateway disconnected; will attempt to resume on reconnect");
-                }
-            }
+            };
             self.publish();
 
-            // Brief pause before reconnecting to avoid a tight loop on rapid
-            // disconnects; full backoff applies only when the WS connect itself fails.
+            // Every cause advances the backoff ladder; only a connection that
+            // has proven stable resets it (see `plan_reconnect`).
+            let wait = self.core.reconnect_delay(cause, rand::random(), plan_reconnect);
+            info!(?cause, ?wait, "Gateway connection ended; reconnecting");
             tokio::select! {
                 _ = shutdown_rx.recv() => break 'supervisor,
-                _ = tokio::time::sleep(RECONNECT_PAUSE) => {}
+                _ = tokio::time::sleep(wait) => {}
             }
             // current_reader stays None — the loop reconnects.
         }
@@ -937,10 +924,11 @@ mod tests {
     }
 
     #[test]
-    fn close_codes_classify_as_in_0_6_1() {
-        for code in [4000, 4001, 4002, 4005, 4008, 1000, 1001, 1006, 4999] {
+    fn close_codes_classify() {
+        for code in [4000, 4001, 4002, 4005, 1000, 1001, 1006, 4999] {
             assert_eq!(outcome(code), "Reconnect(Resume)", "code {code}");
         }
+        assert_eq!(outcome(4008), "Reconnect(Failure)");
         for code in [4003, 4007, 4009] {
             assert_eq!(outcome(code), "Reconnect(Identify)", "code {code}");
         }

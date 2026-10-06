@@ -15,8 +15,9 @@ use tokio::{
     time::timeout,
 };
 use tokio_tungstenite::{
-    accept_async,
+    accept_hdr_async,
     tungstenite::{
+        handshake::server::{Request, Response},
         protocol::{frame::coding::CloseCode, CloseFrame},
         Message,
     },
@@ -34,6 +35,9 @@ struct Server {
     url: String,
 }
 
+/// A request URI recorded during the WebSocket upgrade.
+type SeenUri = std::sync::Arc<std::sync::Mutex<String>>;
+
 impl Server {
     async fn bind() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -41,18 +45,37 @@ impl Server {
         Self { listener, url }
     }
 
+    /// The listener's URL with no path or query, the shape of READY's
+    /// `resume_gateway_url`.
+    fn bare_url(&self) -> String {
+        format!("ws://{}", self.listener.local_addr().unwrap())
+    }
+
     async fn accept(&self) -> Conn {
         self.accept_within(WAIT).await.expect("gateway did not connect")
     }
 
+    // The upgrade callback's error type is tungstenite's, not ours to shrink.
+    #[allow(clippy::result_large_err)]
     async fn accept_within(&self, wait: Duration) -> Option<Conn> {
         let (stream, _) = timeout(wait, self.listener.accept()).await.ok()?.unwrap();
-        Some(Conn { ws: accept_async(stream).await.unwrap() })
+        let seen = SeenUri::default();
+        let record = seen.clone();
+        let ws = accept_hdr_async(stream, move |req: &Request, resp: Response| {
+            *record.lock().unwrap() = req.uri().to_string();
+            Ok(resp)
+        })
+        .await
+        .unwrap();
+        let uri = seen.lock().unwrap().clone();
+        Some(Conn { ws, uri })
     }
 }
 
 struct Conn {
     ws: WebSocketStream<TcpStream>,
+    /// Path and query the client asked for.
+    uri: String,
 }
 
 impl Conn {
@@ -147,8 +170,8 @@ async fn hello_is_answered_with_identify() {
     assert_eq!(identify["d"]["capabilities"], 16381);
     assert_eq!(identify["d"]["properties"]["client_build_number"], 1);
     assert_eq!(gw.stage().await, ConnectionStage::Identifying);
-    // Pinned 0.6.1 behaviour: HELLO is answered after a fixed 500 ms pause.
-    assert!(waited >= Duration::from_millis(450), "IDENTIFY after {waited:?}");
+    // G-3: HELLO is answered at once, not after a fixed pause.
+    assert!(waited < Duration::from_millis(250), "IDENTIFY after {waited:?}");
 
     gw.disconnect().await;
 }
@@ -174,14 +197,14 @@ async fn op_7_reconnects_and_resumes() {
     let server = Server::bind().await;
     let resume_server = Server::bind().await;
     let (mut gw, _rx, mut conn) = start(&server).await;
-    conn.identify_and_ready("sess-1", &resume_server.url).await;
+    conn.identify_and_ready("sess-1", &resume_server.bare_url()).await;
     conn.dispatch("MESSAGE_CREATE", 5, json!({})).await;
 
     conn.send(json!({ "op": 7, "d": null })).await;
 
-    // Pinned 0.6.1 behaviour: the reconnect ignores READY's resume URL and
-    // returns to the base URL.
-    let mut conn = server.accept().await;
+    // G-1: the RESUME goes to READY's resume URL, with the base URL's query.
+    let mut conn = resume_server.accept().await;
+    assert_eq!(conn.uri, "/?encoding=json&v=9");
     conn.hello(QUIET_INTERVAL_MS).await;
     let resume = conn.recv_op(6).await;
     assert_eq!(resume["d"]["session_id"], "sess-1");
@@ -199,6 +222,8 @@ async fn session_ending_close_reconnects_with_identify() {
     wait_for_stage(&gw, ConnectionStage::Connected).await;
 
     conn.close(4009).await;
+
+    // The session is gone, so the reconnect returns to the base URL.
 
     let mut conn = server.accept().await;
     conn.hello(QUIET_INTERVAL_MS).await;
@@ -219,8 +244,69 @@ async fn fatal_close_stops_the_supervisor() {
 
     assert!(server.accept_within(Duration::from_millis(1_500)).await.is_none(), "reconnected after 4004");
     assert_eq!(gw.stage().await, ConnectionStage::Disconnected);
-    // Pinned 0.6.1 behaviour: the writer outlives the supervisor.
-    assert!(gw.is_connected().await);
+    // G-6: a stopped supervisor no longer reports a connection.
+    assert!(!gw.is_connected().await);
+
+    gw.disconnect().await;
+}
+
+#[tokio::test]
+async fn unacknowledged_heartbeat_cuts_the_connection() {
+    let server = Server::bind().await;
+    let resume_server = Server::bind().await;
+    let (mut gw, _rx, mut conn) = start(&server).await;
+    conn.hello(200).await;
+    conn.recv_op(2).await;
+    conn.ready("sess-1", &resume_server.bare_url()).await;
+
+    // G-2: heartbeats arrive, none is acknowledged, and the client gives up on
+    // the connection at the next tick and RESUMEs elsewhere.
+    conn.recv_op(1).await;
+    let gave_up = Instant::now();
+    let mut conn = resume_server.accept().await;
+    // Next heartbeat tick (<= 200 ms), then the ladder floor (1 s).
+    assert!(gave_up.elapsed() < Duration::from_millis(2_000), "reconnected after {:?}", gave_up.elapsed());
+    conn.hello(QUIET_INTERVAL_MS).await;
+    assert_eq!(conn.recv_op(6).await["d"]["session_id"], "sess-1");
+
+    gw.disconnect().await;
+}
+
+#[tokio::test]
+async fn resumable_op_9_reconnects_on_the_fast_floor() {
+    let server = Server::bind().await;
+    let resume_server = Server::bind().await;
+    let (mut gw, _rx, mut conn) = start(&server).await;
+    conn.identify_and_ready("sess-1", &resume_server.bare_url()).await;
+    wait_for_stage(&gw, ConnectionStage::Connected).await;
+
+    conn.send(json!({ "op": 9, "d": true })).await;
+    let sent = Instant::now();
+
+    // G-4: no 1-5 s wait on the reader; the RESUME follows the 250 ms floor.
+    let mut conn = resume_server.accept().await;
+    assert!(sent.elapsed() < Duration::from_millis(900), "reconnected after {:?}", sent.elapsed());
+    conn.hello(QUIET_INTERVAL_MS).await;
+    assert_eq!(conn.recv_op(6).await["d"]["session_id"], "sess-1");
+
+    gw.disconnect().await;
+}
+
+#[tokio::test]
+async fn non_resumable_op_9_identifies_after_the_jittered_wait() {
+    let server = Server::bind().await;
+    let (mut gw, _rx, mut conn) = start(&server).await;
+    conn.identify_and_ready("sess-1", "ws://127.0.0.1:9").await;
+    wait_for_stage(&gw, ConnectionStage::Connected).await;
+
+    conn.send(json!({ "op": 9, "d": false })).await;
+    let sent = Instant::now();
+
+    let mut conn = server.accept().await;
+    let waited = sent.elapsed();
+    assert!(waited >= Duration::from_millis(950), "re-identified after {waited:?}");
+    conn.hello(QUIET_INTERVAL_MS).await;
+    conn.recv_op(2).await;
 
     gw.disconnect().await;
 }

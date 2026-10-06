@@ -21,21 +21,60 @@ pub(crate) const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(41
 /// read timeout without bound.
 const MAX_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(300);
 
-/// Pause between HELLO and the IDENTIFY or RESUME that answers it.
-const HANDSHAKE_DELAY: Duration = Duration::from_millis(500);
+/// Floor of the reconnect backoff ladder.
+pub const BACKOFF_MIN: Duration = Duration::from_secs(1);
+/// Ceiling of the reconnect backoff ladder.
+pub const BACKOFF_MAX: Duration = Duration::from_secs(60);
+/// Wait before a RESUME that Discord itself asked for, when the ladder is at
+/// its floor. Not zero: a connection that is closed straight after opening
+/// must not spin.
+pub const FAST_RECONNECT: Duration = Duration::from_millis(250);
+/// Window Discord specifies before re-IDENTIFYing after a session is lost.
+/// IDENTIFY is budgeted per day, so this wait is kept and jittered.
+pub const INVALID_SESSION_MIN: Duration = Duration::from_secs(1);
+/// Upper end of the IDENTIFY window; see [`INVALID_SESSION_MIN`].
+pub const INVALID_SESSION_MAX: Duration = Duration::from_secs(5);
 
 /// Why a connection is being replaced. Drives how long the supervisor waits
 /// before the next connect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReconnectCause {
-    /// Discord asked this connection to move (op 7), or closed it with a code
-    /// that keeps the session. The next connect RESUMEs if a session is held.
+    /// Discord asked this connection to move (op 7, a resumable op 9), or
+    /// closed it with a code that keeps the session. The next connect RESUMEs
+    /// if a session is held.
     Resume,
     /// The session is gone; the next connect must IDENTIFY.
     Identify,
-    /// An ordinary failure: a dropped socket, a read timeout, a refused
-    /// connect.
+    /// An ordinary failure: a dropped socket, an unacknowledged heartbeat, a
+    /// read timeout, a refused connect.
     Failure,
+}
+
+/// One reconnect's wait, and the backoff to carry into the next one.
+///
+/// The ladder advances on every cause, so a burst of reconnects slows down
+/// whatever caused them. Only the caller resets it, once a connection has
+/// proven stable.
+///
+/// - [`ReconnectCause::Resume`] with a session held, while the ladder is at
+///   its floor: [`FAST_RECONNECT`]. A RESUME costs no IDENTIFY.
+/// - [`ReconnectCause::Identify`]: a jittered wait in
+///   [`INVALID_SESSION_MIN`]..[`INVALID_SESSION_MAX`], or the current backoff
+///   if that is longer.
+/// - Anything else: the current backoff.
+///
+/// `rand` is a draw in `0.0..=1.0`, passed in so the result is deterministic.
+pub fn plan_reconnect(cause: ReconnectCause, backoff: Duration, session_held: bool, rand: f64) -> (Duration, Duration) {
+    let next = (backoff * 2).min(BACKOFF_MAX);
+    let wait = match cause {
+        ReconnectCause::Identify => {
+            let span = INVALID_SESSION_MAX - INVALID_SESSION_MIN;
+            (INVALID_SESSION_MIN + span.mul_f64(rand.clamp(0.0, 1.0))).max(backoff)
+        }
+        ReconnectCause::Resume if session_held && backoff <= BACKOFF_MIN => FAST_RECONNECT,
+        ReconnectCause::Resume | ReconnectCause::Failure => backoff,
+    };
+    (wait, next)
 }
 
 /// One thing the supervisor must do on the core's behalf.
@@ -60,6 +99,8 @@ pub(crate) struct GatewayCore {
     token: String,
     session_id: Option<String>,
     seq: Option<u64>,
+    /// READY's `resume_gateway_url`, with the base URL's query appended.
+    resume_url: Option<String>,
     stage: ConnectionStage,
     heartbeat_interval: Duration,
     next_heartbeat: Option<Instant>,
@@ -69,13 +110,14 @@ pub(crate) struct GatewayCore {
     /// When the current connection last showed a sign of life (opened, or a
     /// frame arrived). The read timeout counts from here.
     last_frame_at: Option<Instant>,
-    /// When to answer HELLO with IDENTIFY or RESUME.
-    handshake_at: Option<Instant>,
-    /// An op 9 waiting out its delay: when to answer, and whether Discord
-    /// said the session is resumable.
-    invalid_session_at: Option<(Instant, bool)>,
     /// Guilds from READY still awaiting their GUILD_CREATE.
     pending_guilds: usize,
+    /// The current connection reached READY or RESUMED.
+    live: bool,
+    /// The current connection has had a heartbeat acknowledged since going
+    /// live. Only this resets the backoff ladder.
+    stable: bool,
+    backoff: Duration,
 }
 
 impl GatewayCore {
@@ -85,6 +127,7 @@ impl GatewayCore {
             token,
             session_id: None,
             seq: None,
+            resume_url: None,
             stage: ConnectionStage::Disconnected,
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
             next_heartbeat: None,
@@ -92,9 +135,10 @@ impl GatewayCore {
             last_heartbeat_sent: None,
             latency: None,
             last_frame_at: None,
-            handshake_at: None,
-            invalid_session_at: None,
             pending_guilds: 0,
+            live: false,
+            stable: false,
+            backoff: BACKOFF_MIN,
         }
     }
 
@@ -119,9 +163,13 @@ impl GatewayCore {
         self.session_id.as_deref()
     }
 
-    /// The URL the next connection should open.
+    /// The URL the next connection should open: READY's resume URL while a
+    /// session is held, the base URL otherwise.
     pub(crate) fn connect_url(&self) -> &str {
-        &self.base_url
+        match &self.resume_url {
+            Some(url) if self.has_session() => url,
+            _ => &self.base_url,
+        }
     }
 
     /// The supervisor is about to open a new socket.
@@ -147,23 +195,32 @@ impl GatewayCore {
         }
     }
 
+    /// How long to wait before the next connect, advancing the ladder.
+    /// `planner` has the shape of [`plan_reconnect`].
+    pub(crate) fn reconnect_delay(&mut self, cause: ReconnectCause, rand: f64, planner: impl FnOnce(ReconnectCause, Duration, bool, f64) -> (Duration, Duration)) -> Duration {
+        let (wait, next) = planner(cause, self.backoff, self.has_session(), rand);
+        self.backoff = next;
+        wait
+    }
+
     fn reset_connection(&mut self) {
         self.next_heartbeat = None;
         self.awaiting_ack = false;
         self.last_heartbeat_sent = None;
         self.last_frame_at = None;
-        self.handshake_at = None;
-        self.invalid_session_at = None;
+        self.live = false;
+        self.stable = false;
     }
 
     fn clear_session(&mut self) {
         self.session_id = None;
         self.seq = None;
+        self.resume_url = None;
     }
 
     /// The earliest instant at which [`Self::tick`] has work to do.
     pub(crate) fn next_deadline(&self) -> Option<Instant> {
-        [self.read_deadline(), self.handshake_at, self.invalid_session_at.map(|(at, _)| at), self.next_heartbeat].into_iter().flatten().min()
+        [self.read_deadline(), self.next_heartbeat].into_iter().flatten().min()
     }
 
     fn read_deadline(&self) -> Option<Instant> {
@@ -186,12 +243,19 @@ impl GatewayCore {
 
         let mut actions = Vec::new();
         match Opcode::from(payload.op) {
-            Opcode::Hello => self.on_hello(payload.d.as_ref(), now, rand),
+            Opcode::Hello => {
+                self.on_hello(payload.d.as_ref(), now, rand);
+                actions.push(self.handshake());
+            }
             Opcode::HeartbeatAck => {
                 if let Some(sent) = self.last_heartbeat_sent {
                     self.latency = Some(now.saturating_duration_since(sent));
                 }
                 self.awaiting_ack = false;
+                if self.live && !self.stable {
+                    self.stable = true;
+                    self.backoff = BACKOFF_MIN;
+                }
                 debug!("Received heartbeat ACK");
             }
             Opcode::Dispatch => {
@@ -206,10 +270,15 @@ impl GatewayCore {
             Opcode::InvalidSession => {
                 let resumable = payload.d.as_ref().and_then(Value::as_bool).unwrap_or(false);
                 warn!(resumable, "Received Invalid Session (op 9)");
-                // Discord asks for a randomised 1-5 s wait before answering, so
-                // a herd of invalidated clients does not return in lockstep.
-                let delay = Duration::from_millis(1000 + (rand * 4000.0) as u64);
-                self.invalid_session_at = Some((now + delay, resumable));
+                if resumable && self.has_session() {
+                    actions.push(Action::Reconnect { cause: ReconnectCause::Resume, reason: "op 9 resumable" });
+                } else {
+                    if resumable {
+                        warn!("Op 9 said resumable but no session is held; identifying instead");
+                    }
+                    self.clear_session();
+                    actions.push(Action::Reconnect { cause: ReconnectCause::Identify, reason: "op 9 not resumable" });
+                }
             }
             opcode => debug!("Received opcode: {:?}", opcode),
         }
@@ -227,7 +296,6 @@ impl GatewayCore {
         self.last_heartbeat_sent = None;
         // Jittered first heartbeat, per the gateway spec.
         self.next_heartbeat = Some(now + self.heartbeat_interval.mul_f64(rand.clamp(0.0, 1.0)));
-        self.handshake_at = Some(now + HANDSHAKE_DELAY);
     }
 
     fn on_dispatch(&mut self, event_type: String, d: Option<Value>, actions: &mut Vec<Action>) {
@@ -235,6 +303,7 @@ impl GatewayCore {
         match event_type.as_str() {
             "READY" => {
                 self.stage = ConnectionStage::Connected;
+                self.live = true;
                 if let Some(d) = &d {
                     if let Some(sid) = d["session_id"].as_str() {
                         // A session id lets its holder resume this gateway, so
@@ -242,6 +311,7 @@ impl GatewayCore {
                         debug!("Captured session_id: {}", sid);
                         self.session_id = Some(sid.to_string());
                     }
+                    self.resume_url = d["resume_gateway_url"].as_str().map(|url| with_query_of(url, &self.base_url));
                     self.pending_guilds = d["guilds"].as_array().map_or(0, Vec::len);
                     debug!("READY: waiting for {} GUILD_CREATE(s) before CACHE_READY", self.pending_guilds);
                     if self.pending_guilds == 0 {
@@ -260,6 +330,7 @@ impl GatewayCore {
             }
             "RESUMED" => {
                 self.stage = ConnectionStage::Connected;
+                self.live = true;
                 info!("Session successfully resumed");
             }
             _ => {}
@@ -268,40 +339,20 @@ impl GatewayCore {
     }
 
     /// Advance the clock. Fires whatever is due at `now`.
-    pub(crate) fn tick(&mut self, now: Instant, rand: f64) -> Vec<Action> {
-        let _ = rand;
-        let mut actions = Vec::new();
-
+    pub(crate) fn tick(&mut self, now: Instant, _rand: f64) -> Vec<Action> {
         if self.read_deadline().is_some_and(|at| now >= at) {
             warn!(read_timeout = ?self.heartbeat_interval * 2, "No gateway frame within the read timeout; the connection may be dead");
-            actions.push(Action::Reconnect { cause: ReconnectCause::Failure, reason: "read timeout" });
-            return actions;
+            return vec![Action::Reconnect { cause: ReconnectCause::Failure, reason: "read timeout" }];
         }
 
-        if self.handshake_at.is_some_and(|at| now >= at) {
-            self.handshake_at = None;
-            actions.push(self.handshake());
-        }
-
-        if let Some((at, resumable)) = self.invalid_session_at {
-            if now >= at {
-                self.invalid_session_at = None;
-                if resumable && self.has_session() {
-                    actions.push(self.handshake());
-                } else {
-                    if resumable {
-                        warn!("Op 9 said resumable but no session is held; identifying instead");
-                    }
-                    self.clear_session();
-                    actions.push(self.handshake());
-                }
-            }
-        }
-
+        let mut actions = Vec::new();
         if let Some(due) = self.next_heartbeat {
             if now >= due {
                 if self.awaiting_ack {
-                    warn!("Still awaiting heartbeat ACK; sending heartbeat anyway");
+                    // Discord's zombie rule: no ACK since the last heartbeat
+                    // means the connection is dead, whatever the socket says.
+                    warn!("Previous heartbeat was never acknowledged; treating the connection as a zombie");
+                    return vec![Action::Reconnect { cause: ReconnectCause::Failure, reason: "heartbeat not acknowledged" }];
                 }
                 actions.push(Action::Send(json!({ "op": 1, "d": self.seq }).to_string()));
                 self.last_heartbeat_sent = Some(now);
@@ -310,7 +361,6 @@ impl GatewayCore {
                 self.next_heartbeat = Some(if next > now { next } else { now + self.heartbeat_interval });
             }
         }
-
         actions
     }
 
@@ -330,7 +380,32 @@ impl GatewayCore {
 
     fn resume_payload(&self) -> Option<String> {
         let (sid, seq) = (self.session_id.as_ref()?, self.seq?);
-        Some(json!({ "op": 6, "d": { "token": self.token, "session_id": sid, "seq": seq } }).to_string())
+        Some(json!({ "op": 6, "d": { "token": gateway_token(&self.token), "session_id": sid, "seq": seq } }).to_string())
+    }
+}
+
+/// The token as the gateway expects it.
+///
+/// Discord's gateway expects the raw token — no `Bot ` / `Bearer ` prefix. The
+/// same token in `DiscordHttpClient` carries the prefix verbatim for the HTTP
+/// `Authorization` header (see `client::DiscordHttpClient::auth_header_value`),
+/// so it is stripped here for gateway payloads only.
+pub(crate) fn gateway_token(token: &str) -> &str {
+    token.strip_prefix("Bot ").or_else(|| token.strip_prefix("Bearer ")).unwrap_or(token)
+}
+
+/// `url` with `base`'s query string, unless `url` already has one.
+///
+/// READY's `resume_gateway_url` is a bare host, and a connection to it must
+/// carry the same `encoding` / `v` / `compress` parameters as the first one.
+fn with_query_of(url: &str, base: &str) -> String {
+    let query = url::Url::parse(base).ok().and_then(|b| b.query().map(str::to_owned));
+    match (url::Url::parse(url), query) {
+        (Ok(mut parsed), Some(query)) if parsed.query().is_none() => {
+            parsed.set_query(Some(&query));
+            parsed.to_string()
+        }
+        _ => url.to_string(),
     }
 }
 
@@ -352,6 +427,10 @@ mod tests {
         json!({ "op": 10, "d": { "heartbeat_interval": interval_ms } }).to_string()
     }
 
+    fn ack() -> String {
+        json!({ "op": 11 }).to_string()
+    }
+
     fn dispatch(t: &str, s: u64, d: Value) -> String {
         json!({ "op": 0, "t": t, "s": s, "d": d }).to_string()
     }
@@ -367,21 +446,8 @@ mod tests {
         let mut core = GatewayCore::new(URL.to_string(), "tok".to_string());
         core.connecting();
         core.opened(t0);
-        assert!(core.frame(&hello(interval_ms), t0, 1.0).is_empty());
+        assert_eq!(core.frame(&hello(interval_ms), t0, 1.0), vec![Action::Identify]);
         (core, t0)
-    }
-
-    /// Run ticks every `step` from `from` to `to` inclusive, collecting actions.
-    fn run(core: &mut GatewayCore, from: Instant, to: Instant, step: Duration) -> Vec<(Duration, Action)> {
-        let mut out = Vec::new();
-        let mut now = from;
-        while now <= to {
-            for a in core.tick(now, 0.5) {
-                out.push((now - from, a));
-            }
-            now += step;
-        }
-        out
     }
 
     fn sends_op(action: &Action, op: u64) -> bool {
@@ -389,11 +455,8 @@ mod tests {
     }
 
     #[test]
-    fn hello_waits_before_identifying() {
-        let (mut core, t0) = after_hello(45_000);
-        assert_eq!(core.stage(), ConnectionStage::Handshake);
-        assert!(core.tick(t0 + ms(499), 0.5).is_empty());
-        assert_eq!(core.tick(t0 + ms(500), 0.5), vec![Action::Identify]);
+    fn hello_is_answered_at_once() {
+        let (core, _) = after_hello(45_000);
         assert_eq!(core.stage(), ConnectionStage::Identifying);
     }
 
@@ -421,21 +484,34 @@ mod tests {
     }
 
     #[test]
-    fn handshake_resumes_when_a_session_is_held() {
+    fn hello_resumes_when_a_session_is_held() {
         let (mut core, t0) = after_hello(45_000);
         core.frame(&ready("sess"), t0, 0.5);
         core.connection_lost(false);
         let t1 = t0 + ms(10_000);
         core.opened(t1);
-        core.frame(&hello(45_000), t1, 1.0);
-        let actions = core.tick(t1 + ms(500), 0.5);
+        let actions = core.frame(&hello(45_000), t1, 1.0);
         assert_eq!(actions.len(), 1);
         let Action::Send(text) = &actions[0] else { panic!("expected RESUME, got {actions:?}") };
         let v: Value = serde_json::from_str(text).unwrap();
         assert_eq!(v["op"], 6);
         assert_eq!(v["d"]["session_id"], "sess");
         assert_eq!(v["d"]["seq"], 1);
+        assert_eq!(v["d"]["token"], "tok");
         assert_eq!(core.stage(), ConnectionStage::Resuming);
+    }
+
+    #[test]
+    fn resume_strips_the_token_prefix() {
+        let t0 = Instant::now();
+        let mut core = GatewayCore::new(URL.to_string(), "Bot tok".to_string());
+        core.opened(t0);
+        core.frame(&hello(45_000), t0, 1.0);
+        core.frame(&ready("sess"), t0, 0.5);
+        core.connection_lost(false);
+        core.opened(t0);
+        let Action::Send(text) = &core.frame(&hello(45_000), t0, 1.0)[0] else { panic!("expected RESUME") };
+        assert_eq!(serde_json::from_str::<Value>(text).unwrap()["d"]["token"], "tok");
     }
 
     #[test]
@@ -445,23 +521,34 @@ mod tests {
         core.connection_lost(true);
         assert!(!core.has_session());
         assert_eq!(core.stage(), ConnectionStage::Disconnected);
+        assert_eq!(core.connect_url(), URL);
     }
 
     #[test]
     fn heartbeat_carries_the_latest_sequence() {
         let (mut core, t0) = after_hello(1_000);
         core.frame(&dispatch("MESSAGE_CREATE", 42, json!({})), t0, 0.5);
-        let beats: Vec<_> = run(&mut core, t0 + ms(600), t0 + ms(1_000), ms(100)).into_iter().filter(|(_, a)| sends_op(a, 1)).collect();
-        assert_eq!(beats.len(), 1);
-        assert_eq!(beats[0].1, Action::Send(json!({ "op": 1, "d": 42 }).to_string()));
+        assert!(core.tick(t0 + ms(999), 0.5).is_empty());
+        assert_eq!(core.tick(t0 + ms(1_000), 0.5), vec![Action::Send(json!({ "op": 1, "d": 42 }).to_string())]);
     }
 
     #[test]
     fn heartbeat_ack_measures_latency() {
         let (mut core, t0) = after_hello(1_000);
         core.tick(t0 + ms(1_000), 0.5);
-        core.frame(&json!({ "op": 11 }).to_string(), t0 + ms(1_040), 0.5);
+        core.frame(&ack(), t0 + ms(1_040), 0.5);
         assert_eq!(core.latency(), Some(ms(40)));
+    }
+
+    #[test]
+    fn acknowledged_heartbeats_keep_the_connection() {
+        let (mut core, t0) = after_hello(1_000);
+        for beat in 1..=5 {
+            let at = t0 + ms(1_000 * beat);
+            let actions = core.tick(at, 0.5);
+            assert!(sends_op(&actions[0], 1), "beat {beat}: {actions:?}");
+            core.frame(&ack(), at + ms(30), 0.5);
+        }
     }
 
     #[test]
@@ -472,12 +559,14 @@ mod tests {
     }
 
     #[test]
-    fn read_timeout_is_two_intervals_of_silence() {
-        let (mut core, t0) = after_hello(1_000);
-        core.frame(&json!({ "op": 11 }).to_string(), t0 + ms(500), 0.5);
-        assert_eq!(core.next_deadline(), Some(t0 + ms(500)));
-        assert!(!core.tick(t0 + ms(2_499), 0.5).iter().any(|a| matches!(a, Action::Reconnect { .. })));
-        assert_eq!(core.tick(t0 + ms(2_500), 0.5), vec![Action::Reconnect { cause: ReconnectCause::Failure, reason: "read timeout" }]);
+    fn read_timeout_is_two_intervals_of_silence_before_hello() {
+        let t0 = Instant::now();
+        let mut core = GatewayCore::new(URL.to_string(), "tok".to_string());
+        core.opened(t0);
+        let timeout = DEFAULT_HEARTBEAT_INTERVAL * 2;
+        assert_eq!(core.next_deadline(), Some(t0 + timeout));
+        assert!(core.tick(t0 + timeout - ms(1), 0.5).is_empty());
+        assert_eq!(core.tick(t0 + timeout, 0.5), vec![Action::Reconnect { cause: ReconnectCause::Failure, reason: "read timeout" }]);
     }
 
     #[test]
@@ -494,51 +583,127 @@ mod tests {
         assert_eq!(core.next_heartbeat, Some(t0 + MAX_HEARTBEAT_INTERVAL));
     }
 
-    // ── Behaviour pinned as found in 0.6.1. The tests in this block describe
-    // what the code does, not what it should do; the fixes flip them. ──
+    // ── G-1: RESUME goes to READY's resume_gateway_url ──
 
     #[test]
-    fn pinned_unacked_heartbeat_is_resent_without_reconnecting() {
-        let (mut core, t0) = after_hello(1_000);
-        let actions = run(&mut core, t0 + ms(500), t0 + ms(1_400), ms(100));
-        assert!(actions.iter().any(|(_, a)| sends_op(a, 1)));
-        // A dispatch keeps the read timeout away, but no ACK comes. The next
-        // heartbeat tick neither reconnects nor holds back the heartbeat.
-        core.frame(&dispatch("TYPING_START", 2, json!({})), t0 + ms(1_500), 0.5);
-        assert!(core.tick(t0 + ms(1_900), 0.5).is_empty());
-        let actions = core.tick(t0 + ms(2_000), 0.5);
-        assert_eq!(actions.len(), 1);
-        assert!(sends_op(&actions[0], 1));
-    }
-
-    #[test]
-    fn pinned_invalid_session_waits_then_answers_on_the_same_socket() {
+    fn resume_targets_resume_gateway_url_with_the_base_query() {
         let (mut core, t0) = after_hello(45_000);
-        core.tick(t0 + ms(500), 0.5);
-        core.frame(&ready("sess"), t0 + ms(600), 0.5);
-        // rand 0.5 → 1000 + 2000 ms.
-        assert!(core.frame(&json!({ "op": 9, "d": true }).to_string(), t0 + ms(1_000), 0.5).is_empty());
-        assert!(core.tick(t0 + ms(3_999), 0.5).is_empty());
-        let actions = core.tick(t0 + ms(4_000), 0.5);
-        assert!(sends_op(&actions[0], 6), "resumable op 9 answers with RESUME: {actions:?}");
-    }
-
-    #[test]
-    fn pinned_non_resumable_invalid_session_identifies_after_the_wait() {
-        let (mut core, t0) = after_hello(45_000);
-        core.tick(t0 + ms(500), 0.5);
-        core.frame(&ready("sess"), t0 + ms(500), 0.5);
-        core.frame(&json!({ "op": 9, "d": false }).to_string(), t0 + ms(500), 0.0);
-        assert!(core.has_session());
-        assert_eq!(core.tick(t0 + ms(1_500), 0.5), vec![Action::Identify]);
-        assert!(!core.has_session());
-    }
-
-    #[test]
-    fn pinned_resume_goes_to_the_base_url() {
-        let (mut core, t0) = after_hello(45_000);
+        assert_eq!(core.connect_url(), URL);
         core.frame(&ready("sess"), t0, 0.5);
         core.connection_lost(false);
+        assert_eq!(core.connect_url(), "wss://resume.example/?encoding=json&v=9");
+    }
+
+    #[test]
+    fn resume_url_keeps_its_own_query() {
+        assert_eq!(with_query_of("ws://127.0.0.1:9/?v=10", URL), "ws://127.0.0.1:9/?v=10");
+        assert_eq!(with_query_of("not a url", URL), "not a url");
+    }
+
+    // ── G-2: an unacknowledged heartbeat ends the connection at the next tick ──
+
+    #[test]
+    fn unacked_heartbeat_reconnects_at_the_next_tick() {
+        let (mut core, t0) = after_hello(1_000);
+        assert!(sends_op(&core.tick(t0 + ms(1_000), 0.5)[0], 1));
+        // A dispatch keeps the read timeout away, but no ACK comes.
+        core.frame(&dispatch("TYPING_START", 2, json!({})), t0 + ms(1_500), 0.5);
+        assert!(core.tick(t0 + ms(1_999), 0.5).is_empty());
+        assert_eq!(core.tick(t0 + ms(2_000), 0.5), vec![Action::Reconnect { cause: ReconnectCause::Failure, reason: "heartbeat not acknowledged" }]);
+    }
+
+    // ── G-4: op 9 reconnects instead of waiting on the reader ──
+
+    #[test]
+    fn resumable_op_9_reconnects_and_keeps_the_session() {
+        let (mut core, t0) = after_hello(45_000);
+        core.frame(&ready("sess"), t0, 0.5);
+        let actions = core.frame(&json!({ "op": 9, "d": true }).to_string(), t0, 0.5);
+        assert_eq!(actions, vec![Action::Reconnect { cause: ReconnectCause::Resume, reason: "op 9 resumable" }]);
+        assert!(core.has_session());
+    }
+
+    #[test]
+    fn non_resumable_op_9_drops_the_session() {
+        let (mut core, t0) = after_hello(45_000);
+        core.frame(&ready("sess"), t0, 0.5);
+        let actions = core.frame(&json!({ "op": 9, "d": false }).to_string(), t0, 0.5);
+        assert_eq!(actions, vec![Action::Reconnect { cause: ReconnectCause::Identify, reason: "op 9 not resumable" }]);
+        assert!(!core.has_session());
         assert_eq!(core.connect_url(), URL);
+    }
+
+    #[test]
+    fn resumable_op_9_without_a_session_identifies() {
+        let (mut core, t0) = after_hello(45_000);
+        let actions = core.frame(&json!({ "op": 9, "d": true }).to_string(), t0, 0.5);
+        assert_eq!(actions, vec![Action::Reconnect { cause: ReconnectCause::Identify, reason: "op 9 not resumable" }]);
+    }
+
+    // ── G-5: the ladder applies to every cause, and resets only once stable ──
+
+    #[test]
+    fn plan_reconnect_table() {
+        use ReconnectCause::*;
+        let s = Duration::from_secs;
+        // (cause, backoff, session_held, rand) -> (wait, next backoff)
+        let cases = [
+            ((Resume, s(1), true, 0.5), (FAST_RECONNECT, s(2))),
+            ((Resume, s(2), true, 0.5), (s(2), s(4))),
+            ((Resume, s(1), false, 0.5), (s(1), s(2))),
+            ((Identify, s(1), false, 0.0), (s(1), s(2))),
+            ((Identify, s(1), false, 1.0), (s(5), s(2))),
+            ((Identify, s(1), false, 0.5), (s(3), s(2))),
+            ((Identify, s(16), false, 0.5), (s(16), s(32))),
+            ((Failure, s(1), true, 0.5), (s(1), s(2))),
+            ((Failure, s(60), true, 0.5), (s(60), s(60))),
+            ((Failure, s(40), true, 0.5), (s(40), s(60))),
+        ];
+        for ((cause, backoff, held, rand), want) in cases {
+            assert_eq!(plan_reconnect(cause, backoff, held, rand), want, "{cause:?} {backoff:?} {held} {rand}");
+        }
+    }
+
+    /// One connection that IDENTIFYs, reaches READY, and is closed with a
+    /// session-ending code before any heartbeat is acknowledged.
+    fn ready_then_close(core: &mut GatewayCore, at: Instant) -> Duration {
+        core.opened(at);
+        core.frame(&hello(45_000), at, 1.0);
+        core.frame(&ready("sess"), at, 0.5);
+        core.connection_lost(true);
+        core.reconnect_delay(ReconnectCause::Identify, 0.0, plan_reconnect)
+    }
+
+    #[test]
+    fn ready_then_close_loop_climbs_the_ladder() {
+        let t0 = Instant::now();
+        let mut core = GatewayCore::new(URL.to_string(), "tok".to_string());
+        let waits: Vec<u64> = (0..8).map(|_| ready_then_close(&mut core, t0).as_secs()).collect();
+        assert_eq!(waits, [1, 2, 4, 8, 16, 32, 60, 60]);
+    }
+
+    #[test]
+    fn first_ack_after_going_live_resets_the_ladder() {
+        let t0 = Instant::now();
+        let mut core = GatewayCore::new(URL.to_string(), "tok".to_string());
+        for _ in 0..4 {
+            ready_then_close(&mut core, t0);
+        }
+        core.opened(t0);
+        core.frame(&hello(1_000), t0, 1.0);
+        // An ACK before READY does not count.
+        core.tick(t0 + ms(1_000), 0.5);
+        core.frame(&ack(), t0 + ms(1_010), 0.5);
+        core.frame(&ready("sess"), t0 + ms(1_020), 0.5);
+        core.connection_lost(false);
+        assert_eq!(core.reconnect_delay(ReconnectCause::Failure, 0.5, plan_reconnect), Duration::from_secs(16));
+
+        core.opened(t0);
+        core.frame(&hello(1_000), t0, 1.0);
+        core.frame(&dispatch("RESUMED", 2, json!({})), t0, 0.5);
+        core.tick(t0 + ms(1_000), 0.5);
+        core.frame(&ack(), t0 + ms(1_010), 0.5);
+        core.connection_lost(false);
+        assert_eq!(core.reconnect_delay(ReconnectCause::Resume, 0.5, plan_reconnect), FAST_RECONNECT);
     }
 }
