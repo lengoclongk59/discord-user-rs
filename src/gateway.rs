@@ -1,10 +1,7 @@
 //! Discord WebSocket Gateway connection
 
 use std::{
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -19,13 +16,16 @@ use tokio::{
     sync::{broadcast, mpsc, RwLock},
 };
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage, MaybeTlsStream, WebSocketStream};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
+use self::machine::{Action, GatewayCore, ReconnectCause};
 use crate::{
     error::Result,
     events::DispatchEvent,
     types::{ConnectionStage, ReconnectType, UserStatus},
 };
+
+mod machine;
 
 /// Hardcoded gateway endpoint (mimics Chrome browser session)
 const GATEWAY_URL: &str = "wss://gateway-us-east1-c.discord.gg/?encoding=json&v=9";
@@ -153,11 +153,10 @@ enum GatewayLoopOutcome {
     Shutdown,
     /// Discord returned a fatal close code; reconnecting will not help.
     Fatal { code: u16, reason: &'static str },
-    /// Discord told us our session is gone — clear it so the next connection
+    /// The connection ended; reconnect. A [`ReconnectCause::Identify`] cause
+    /// means Discord told us our session is gone, so the next connection
     /// performs a full IDENTIFY rather than RESUME.
-    ReconnectFresh,
-    /// Connection ended unexpectedly — reconnect and resume if possible.
-    Reconnect,
+    Reconnect(ReconnectCause),
 }
 
 /// Classify a Discord WebSocket close code into a supervisor outcome.
@@ -168,30 +167,144 @@ enum GatewayLoopOutcome {
 fn classify_close(code: Option<u16>) -> GatewayLoopOutcome {
     match code {
         // 4000 Unknown error — generic recoverable failure, attempt RESUME.
-        Some(4000) => GatewayLoopOutcome::Reconnect,
+        Some(4000) => GatewayLoopOutcome::Reconnect(ReconnectCause::Resume),
         // 4001 Unknown opcode — we sent a bad opcode; safe to RESUME after fix.
-        Some(4001) => GatewayLoopOutcome::Reconnect,
+        Some(4001) => GatewayLoopOutcome::Reconnect(ReconnectCause::Resume),
         // 4002 Decode error — Discord couldn't parse our payload; RESUME.
-        Some(4002) => GatewayLoopOutcome::Reconnect,
+        Some(4002) => GatewayLoopOutcome::Reconnect(ReconnectCause::Resume),
         // 4003 Not authenticated — sent a non-IDENTIFY before IDENTIFY; the
         // session is gone, force a fresh IDENTIFY rather than RESUME.
-        Some(4003) => GatewayLoopOutcome::ReconnectFresh,
+        Some(4003) => GatewayLoopOutcome::Reconnect(ReconnectCause::Identify),
         Some(4004) => GatewayLoopOutcome::Fatal { code: 4004, reason: "Authentication failed" },
         // 4005 Already authenticated — odd state but the session is still valid.
-        Some(4005) => GatewayLoopOutcome::Reconnect,
+        Some(4005) => GatewayLoopOutcome::Reconnect(ReconnectCause::Resume),
         // 4007 Invalid seq, 4008 Rate limited, 4009 Session timed out.
         // 4008 is recoverable per docs but a Reconnect-with-backoff is appropriate;
         // the supervisor's outer reconnect loop already applies backoff on connect failure.
-        Some(4008) => GatewayLoopOutcome::Reconnect,
+        Some(4008) => GatewayLoopOutcome::Reconnect(ReconnectCause::Resume),
         // Invalid seq / session timed out — session is unrecoverable, force re-IDENTIFY.
-        Some(4007 | 4009) => GatewayLoopOutcome::ReconnectFresh,
+        Some(4007 | 4009) => GatewayLoopOutcome::Reconnect(ReconnectCause::Identify),
         Some(4010) => GatewayLoopOutcome::Fatal { code: 4010, reason: "Invalid shard" },
         Some(4011) => GatewayLoopOutcome::Fatal { code: 4011, reason: "Sharding required" },
         Some(4012) => GatewayLoopOutcome::Fatal { code: 4012, reason: "Invalid API version" },
         Some(4013) => GatewayLoopOutcome::Fatal { code: 4013, reason: "Invalid intents" },
         Some(4014) => GatewayLoopOutcome::Fatal { code: 4014, reason: "Disallowed intents" },
-        Some(_) | None => GatewayLoopOutcome::Reconnect,
+        Some(_) | None => GatewayLoopOutcome::Reconnect(ReconnectCause::Resume),
     }
+}
+
+/// Snapshot of the supervisor's state, read by the public getters.
+#[derive(Debug, Default)]
+struct Shared {
+    stage: ConnectionStage,
+    latency: Option<Duration>,
+    has_session: bool,
+}
+
+/// Everything IDENTIFY needs besides the token.
+#[derive(Debug, Clone)]
+struct IdentifyDefaults {
+    custom_status: UserStatus,
+    capabilities: u32,
+    intents: Option<u64>,
+    large_threshold: u16,
+    shard: Option<[u32; 2]>,
+    client_build_number: Option<u32>,
+}
+
+impl IdentifyDefaults {
+    /// The IDENTIFY `d` object for `token`. Fetches the client build number
+    /// from discord.com once per process unless one was pinned.
+    async fn payload(&self, token: &str) -> Value {
+        let build_number = match self.client_build_number {
+            Some(n) => n,
+            None => client_build_number().await,
+        };
+        identify_payload(token, self.custom_status, self.capabilities, self.intents, self.large_threshold, self.shard, build_number)
+    }
+}
+
+/// Build the IDENTIFY `d` object.
+///
+/// `intents` is honoured for bot-token connections — when `Some` we add an
+/// `intents` field to the payload alongside the existing `capabilities`
+/// field used for user tokens. `large_threshold` is forwarded as required
+/// by the Discord docs (valid range 50–250; clamped here as belt-and-braces).
+// TODO: route `large_threshold` through `DiscordUserBuilder` so callers can
+// tune it without touching `Gateway` directly.
+fn identify_payload(token: &str, status: UserStatus, capabilities: u32, intents: Option<u64>, large_threshold: u16, shard: Option<[u32; 2]>, build_number: u32) -> Value {
+    let large_threshold = large_threshold.clamp(50, 250);
+    let mut data = json!({
+        "token": gateway_token(token),
+        "capabilities": capabilities,
+        "large_threshold": large_threshold,
+        "properties": {
+            "os": "Windows",
+            "browser": "Chrome",
+            "device": "",
+            "system_locale": "en-US",
+            "browser_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "browser_version": "120.0.0.0",
+            "os_version": "10",
+            "referrer": "",
+            "referring_domain": "",
+            "referrer_current": "",
+            "referring_domain_current": "",
+            "release_channel": "stable",
+            "client_build_number": build_number,
+            "client_event_source": null
+        },
+        "presence": {
+            "status": status.as_str(),
+            "since": 0,
+            "activities": [],
+            "afk": false
+        },
+        "compress": false,
+        "client_state": {
+            "guild_versions": {},
+            "highest_last_message_id": "0",
+            "read_state_version": 0,
+            "user_guild_settings_version": -1,
+            "private_channels_version": "0",
+            "api_code_version": 0
+        }
+    });
+
+    // Bot-token mode: include `intents` alongside `capabilities`. User-token
+    // mode (intents == None) keeps the existing payload shape unchanged.
+    if let Some(intents) = intents {
+        if let Some(obj) = data.as_object_mut() {
+            obj.insert("intents".to_string(), Value::from(intents));
+        }
+    }
+
+    // Sharding: Discord requires sharding once a bot reaches 2 500 guilds and
+    // emits close code 4011 ("sharding required") if absent. Shape: [id, count].
+    if let Some([shard_id, shard_count]) = shard {
+        if let Some(obj) = data.as_object_mut() {
+            obj.insert("shard".to_string(), json!([shard_id, shard_count]));
+        }
+    }
+
+    data
+}
+
+/// The token as the gateway expects it.
+///
+/// Discord's gateway expects the raw token — no `Bot ` / `Bearer ` prefix. The
+/// same token in `DiscordHttpClient` carries the prefix verbatim for the HTTP
+/// `Authorization` header (see `client::DiscordHttpClient::auth_header_value`),
+/// so it is stripped here for gateway payloads only.
+fn gateway_token(token: &str) -> &str {
+    token.strip_prefix("Bot ").or_else(|| token.strip_prefix("Bearer ")).unwrap_or(token)
+}
+
+async fn send_text(writer: &Arc<RwLock<Option<WsWriter>>>, text: String) -> Result<()> {
+    if let Some(ref mut w) = *writer.write().await {
+        w.send(WsMessage::Text(text.into())).await?;
+    }
+    Ok(())
 }
 
 /// Gateway connection manager
@@ -215,25 +328,15 @@ pub struct Gateway {
     /// Optional `[shard_id, shard_count]` array sent in IDENTIFY. Discord requires
     /// sharding once a bot reaches 2 500 guilds and may force-close with code 4011.
     shard: Option<[u32; 2]>,
+    /// Base URL override. `None` uses the Discord URL for `compression_kind`.
+    url: Option<String>,
+    /// Client build number pinned for IDENTIFY. `None` fetches it from
+    /// discord.com once per process.
+    client_build_number: Option<u32>,
     writer: Arc<RwLock<Option<WsWriter>>>,
     event_sender: broadcast::Sender<DispatchEvent>,
-    heartbeat_interval: Arc<RwLock<u64>>,
-    sequence: Arc<RwLock<Option<u64>>>,
-    session_id: Arc<RwLock<Option<String>>>,
+    shared: Arc<Mutex<Shared>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
-    /// Flag indicating we're waiting for a heartbeat ACK
-    awaiting_heartbeat_ack: Arc<AtomicBool>,
-    /// Timestamp of the last heartbeat sent (used for zombie detection)
-    last_heartbeat_sent: Arc<RwLock<Option<Instant>>>,
-    /// Round-trip latency computed from the most recent heartbeat/ACK pair.
-    /// `None` until the first ACK is received.
-    latency: Arc<RwLock<Option<Duration>>>,
-    /// Current connection stage
-    stage: Arc<RwLock<ConnectionStage>>,
-    /// Number of guild IDs from READY still awaiting their GUILD_CREATE.
-    /// Set to `guilds.len()` on READY; decremented on each GUILD_CREATE.
-    /// When it reaches 0, a synthetic CACHE_READY event is fired.
-    pending_guilds: Arc<AtomicUsize>,
 }
 
 impl Gateway {
@@ -260,17 +363,12 @@ impl Gateway {
                 large_threshold: DEFAULT_LARGE_THRESHOLD,
                 compression_kind: CompressionKind::None,
                 shard: None,
+                url: None,
+                client_build_number: None,
                 writer: Arc::new(RwLock::new(None)),
                 event_sender,
-                heartbeat_interval: Arc::new(RwLock::new(41250)),
-                sequence: Arc::new(RwLock::new(None)),
-                session_id: Arc::new(RwLock::new(None)),
+                shared: Arc::new(Mutex::new(Shared::default())),
                 shutdown_tx: None,
-                awaiting_heartbeat_ack: Arc::new(AtomicBool::new(false)),
-                last_heartbeat_sent: Arc::new(RwLock::new(None)),
-                latency: Arc::new(RwLock::new(None)),
-                stage: Arc::new(RwLock::new(ConnectionStage::Disconnected)),
-                pending_guilds: Arc::new(AtomicUsize::new(0)),
             },
             event_receiver,
         )
@@ -313,8 +411,30 @@ impl Gateway {
         self
     }
 
-    /// Return the gateway URL appropriate for the current compression setting.
-    fn gateway_url(&self) -> &'static str {
+    /// Connect to `url` instead of Discord's gateway.
+    ///
+    /// The URL replaces the one [`Self::with_compression`] would pick, query
+    /// string included, so it should carry the same `encoding` and `v`
+    /// parameters. Intended for tests against a local server and for proxies.
+    pub fn with_url(mut self, url: impl Into<String>) -> Self {
+        self.url = Some(url.into());
+        self
+    }
+
+    /// Pin the `client_build_number` sent in IDENTIFY.
+    ///
+    /// Without it, the first IDENTIFY in the process fetches the number from
+    /// `https://discord.com/login` and caches it.
+    pub fn with_client_build_number(mut self, build_number: u32) -> Self {
+        self.client_build_number = Some(build_number);
+        self
+    }
+
+    /// Return the gateway URL for the configured override or compression.
+    fn gateway_url(&self) -> &str {
+        if let Some(url) = &self.url {
+            return url;
+        }
         match self.compression_kind {
             CompressionKind::Zstd => GATEWAY_URL_ZSTD,
             // TODO: add a dedicated zlib-stream URL once we negotiate it explicitly.
@@ -327,22 +447,38 @@ impl Gateway {
         self.event_sender.clone()
     }
 
-    /// Connect to the gateway
+    fn shared(&self) -> std::sync::MutexGuard<'_, Shared> {
+        self.shared.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Connect to the gateway and spawn the supervisor that keeps the
+    /// connection alive.
+    ///
+    /// Returns once the WebSocket is open; IDENTIFY happens in the background
+    /// after Discord's HELLO. The supervisor reconnects on its own and exits
+    /// only on [`Self::disconnect`] or a fatal close code (4004 auth failure,
+    /// 4014 disallowed intents, etc.).
     pub async fn connect(&mut self) -> Result<()> {
-        *self.stage.write().await = ConnectionStage::Connecting;
+        let mut core = GatewayCore::new(self.gateway_url().to_string(), self.token.clone());
+        core.connecting();
+        self.shared().stage = core.stage();
 
-        let url = self.gateway_url();
-        let (ws_stream, _) = connect_async(url).await?;
+        let (ws_stream, _) = connect_async(core.connect_url()).await?;
         let (writer, reader) = ws_stream.split();
-
         *self.writer.write().await = Some(writer);
+        core.opened(Instant::now());
 
-        // Create shutdown channel
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         self.shutdown_tx = Some(shutdown_tx);
 
-        // Start message processing
-        self.process_messages(reader, shutdown_rx).await?;
+        let supervisor = Supervisor {
+            core,
+            identify: IdentifyDefaults { custom_status: self.custom_status, capabilities: self.capabilities, intents: self.intents, large_threshold: self.large_threshold, shard: self.shard, client_build_number: self.client_build_number },
+            writer: Arc::clone(&self.writer),
+            event_sender: self.event_sender.clone(),
+            shared: Arc::clone(&self.shared),
+        };
+        tokio::spawn(supervisor.run(reader, shutdown_rx));
 
         Ok(())
     }
@@ -393,535 +529,6 @@ impl Gateway {
         }
 
         Err(crate::error::DiscordError::MaxRetriesExceeded)
-    }
-
-    /// Spawn the gateway supervisor task.
-    ///
-    /// Owns the WebSocket reader and runs an outer reconnect loop:
-    /// 1. Read messages from the gateway until disconnection
-    /// 2. Classify the disconnection reason (close code, error, timeout)
-    /// 3. Decide whether to reconnect (and resume vs re-identify) or give up
-    /// 4. On reconnect, replace `self.writer` with a fresh WS write half; the
-    ///    next `Hello` triggers RESUME (if `session_id` is set) or IDENTIFY
-    ///    automatically via [`Self::handle_message`].
-    ///
-    /// The task exits only on shutdown or a fatal close code (4004 auth fail,
-    /// 4014 disallowed intents, etc. — see [`classify_close`]).
-    async fn process_messages(&self, initial_reader: WsReader, mut shutdown_rx: mpsc::Receiver<()>) -> Result<()> {
-        let token = self.token.clone();
-        let custom_status = self.custom_status;
-        let capabilities = self.capabilities;
-        let intents = self.intents;
-        let large_threshold = self.large_threshold;
-        let shard = self.shard;
-        let gateway_url: &'static str = self.gateway_url();
-        let writer = Arc::clone(&self.writer);
-        let event_sender = self.event_sender.clone();
-        let heartbeat_interval = Arc::clone(&self.heartbeat_interval);
-        let sequence = Arc::clone(&self.sequence);
-        let session_id = Arc::clone(&self.session_id);
-        let awaiting_ack = Arc::clone(&self.awaiting_heartbeat_ack);
-        let last_sent = Arc::clone(&self.last_heartbeat_sent);
-        let latency = Arc::clone(&self.latency);
-        let stage = Arc::clone(&self.stage);
-        let pending_guilds = Arc::clone(&self.pending_guilds);
-
-        tokio::spawn(async move {
-            // The first iteration uses the reader from the initial connect();
-            // subsequent iterations re-establish the WebSocket here.
-            let mut current_reader: Option<WsReader> = Some(initial_reader);
-            let mut backoff_secs: u64 = 1;
-            const MAX_BACKOFF_SECS: u64 = 60;
-            const RECONNECT_PAUSE: Duration = Duration::from_millis(500);
-
-            'supervisor: loop {
-                // ── 1. Acquire a reader: initial, or reconnect with backoff ──
-                let mut reader = match current_reader.take() {
-                    Some(r) => r,
-                    None => {
-                        info!(backoff_secs, "Reconnecting to Discord gateway…");
-                        *stage.write().await = ConnectionStage::Connecting;
-                        // Drop any stale writer before opening a new socket.
-                        *writer.write().await = None;
-                        // Reset per-connection heartbeat bookkeeping.
-                        awaiting_ack.store(false, Ordering::SeqCst);
-                        *last_sent.write().await = None;
-
-                        match connect_async(gateway_url).await {
-                            Ok((ws_stream, _)) => {
-                                let (w, r) = ws_stream.split();
-                                *writer.write().await = Some(w);
-                                info!("Gateway reconnected successfully");
-                                backoff_secs = 1;
-                                r
-                            }
-                            Err(e) => {
-                                error!(error = %e, backoff_secs, "Gateway reconnect failed; sleeping before retry");
-                                tokio::select! {
-                                    _ = shutdown_rx.recv() => break 'supervisor,
-                                    _ = tokio::time::sleep(Duration::from_secs(backoff_secs)) => {}
-                                }
-                                backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
-                                continue 'supervisor;
-                            }
-                        }
-                    }
-                };
-
-                // ── 2. Inner read loop — runs until the connection ends ──
-                let mut heartbeat_handle: Option<tokio::task::JoinHandle<()>> = None;
-                let outcome: GatewayLoopOutcome = 'inner: loop {
-                    // Read timeout = 2× heartbeat interval (or default 90s before Hello
-                    // is received). Cap at 5 minutes to guard against a malformed Hello.
-                    // Discord normally sends ~41 250 ms.
-                    const MAX_HEARTBEAT_MS: u64 = 300_000;
-                    let hb_ms = (*heartbeat_interval.read().await).min(MAX_HEARTBEAT_MS);
-                    let read_timeout = Duration::from_millis(hb_ms.saturating_mul(2));
-
-                    tokio::select! {
-                        _ = shutdown_rx.recv() => {
-                            info!("Gateway shutdown requested");
-                            break 'inner GatewayLoopOutcome::Shutdown;
-                        }
-                        result = tokio::time::timeout(read_timeout, reader.next()) => {
-                            let msg = match result {
-                                Ok(msg) => msg,
-                                Err(_) => {
-                                    error!(read_timeout = ?read_timeout, "WebSocket read timed out with no message. Connection may be dead.");
-                                    break 'inner GatewayLoopOutcome::Reconnect;
-                                }
-                            };
-                            match msg {
-                                Some(Ok(WsMessage::Text(text))) => {
-                                    if let Err(e) = Self::handle_message(
-                                        &text, &token, custom_status, capabilities, intents, large_threshold, shard,
-                                        &writer, &event_sender, &heartbeat_interval,
-                                        &sequence, &session_id, &mut heartbeat_handle,
-                                        &awaiting_ack, &last_sent, &latency, &stage, &pending_guilds,
-                                    ).await {
-                                        error!(error = %e, "Error handling message");
-                                        // Discord op-7 RECONNECT — bail out and reconnect now
-                                        // rather than waiting for Discord to close the socket.
-                                        if matches!(&e, crate::error::DiscordError::GatewayReconnectRequested) {
-                                            break 'inner GatewayLoopOutcome::Reconnect;
-                                        }
-                                    }
-                                }
-                                Some(Ok(WsMessage::Binary(bytes))) => {
-                                    // Discord may send zlib-compressed JSON payloads as binary frames.
-                                    // Decompress with flate2 and feed to the normal message handler.
-                                    match Self::decompress_zlib(&bytes) {
-                                        Ok(text) => {
-                                            if let Err(e) = Self::handle_message(
-                                                &text, &token, custom_status, capabilities, intents, large_threshold, shard,
-                                                &writer, &event_sender, &heartbeat_interval,
-                                                &sequence, &session_id, &mut heartbeat_handle,
-                                                &awaiting_ack, &last_sent, &latency, &stage, &pending_guilds,
-                                            ).await {
-                                                error!(error = %e, "Error handling decompressed binary message");
-                                                if matches!(&e, crate::error::DiscordError::GatewayReconnectRequested) {
-                                                    break 'inner GatewayLoopOutcome::Reconnect;
-                                                }
-                                            }
-                                        }
-                                        Err(e) => {
-                                            warn!("Failed to decompress binary gateway frame ({} bytes): {}", bytes.len(), e);
-                                        }
-                                    }
-                                }
-                                Some(Ok(WsMessage::Close(frame))) => {
-                                    let close_code: Option<u16> = frame.as_ref().map(|f| u16::from(f.code));
-                                    match &frame {
-                                        Some(f) => info!("Gateway connection closed: code={} reason={}", f.code, f.reason),
-                                        None => info!("Gateway connection closed"),
-                                    }
-                                    break 'inner classify_close(close_code);
-                                }
-                                Some(Err(e)) => {
-                                    error!(error = %e, "WebSocket error");
-                                    break 'inner GatewayLoopOutcome::Reconnect;
-                                }
-                                None => {
-                                    info!("WebSocket stream ended");
-                                    break 'inner GatewayLoopOutcome::Reconnect;
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                };
-
-                // ── 3. Tear down per-connection state ──
-                if let Some(handle) = heartbeat_handle.take() {
-                    handle.abort();
-                }
-                *stage.write().await = ConnectionStage::Disconnected;
-
-                // ── 4. Decide what to do next ──
-                match outcome {
-                    GatewayLoopOutcome::Shutdown => break 'supervisor,
-                    GatewayLoopOutcome::Fatal { code, reason } => {
-                        error!(close_code = code, reason, "Gateway closed with fatal code; not reconnecting");
-                        break 'supervisor;
-                    }
-                    GatewayLoopOutcome::ReconnectFresh => {
-                        *session_id.write().await = None;
-                        *sequence.write().await = None;
-                        info!("Clearing session state; will re-identify on reconnect");
-                    }
-                    GatewayLoopOutcome::Reconnect => {
-                        info!("Gateway disconnected; will attempt to resume on reconnect");
-                    }
-                }
-
-                // Brief pause before reconnecting to avoid a tight loop on rapid
-                // disconnects; full backoff applies only when the WS connect itself fails.
-                tokio::select! {
-                    _ = shutdown_rx.recv() => break 'supervisor,
-                    _ = tokio::time::sleep(RECONNECT_PAUSE) => {}
-                }
-                // current_reader stays None — supervisor loop will reconnect.
-            }
-
-            info!("Gateway supervisor task exiting");
-        });
-
-        Ok(())
-    }
-
-    /// Handle a single gateway message
-    #[allow(clippy::too_many_arguments)]
-    async fn handle_message(text: &str, token: &str, custom_status: UserStatus, capabilities: u32, intents: Option<u64>, large_threshold: u16, shard: Option<[u32; 2]>, writer: &Arc<RwLock<Option<WsWriter>>>, event_sender: &broadcast::Sender<DispatchEvent>, heartbeat_interval: &Arc<RwLock<u64>>, sequence: &Arc<RwLock<Option<u64>>>, session_id: &Arc<RwLock<Option<String>>>, heartbeat_handle: &mut Option<tokio::task::JoinHandle<()>>, awaiting_ack: &Arc<AtomicBool>, last_sent: &Arc<RwLock<Option<Instant>>>, latency: &Arc<RwLock<Option<Duration>>>, stage: &Arc<RwLock<ConnectionStage>>, pending_guilds: &Arc<AtomicUsize>) -> Result<()> {
-        let payload: GatewayPayload = serde_json::from_str(text)?;
-        let opcode = Opcode::from(payload.op);
-
-        // Update sequence number
-        if let Some(s) = payload.s {
-            *sequence.write().await = Some(s);
-        }
-
-        match opcode {
-            Opcode::Hello => {
-                debug!("Received Hello");
-                *stage.write().await = ConnectionStage::Handshake;
-                if let Some(d) = &payload.d {
-                    if let Some(hb_interval) = d["heartbeat_interval"].as_u64() {
-                        *heartbeat_interval.write().await = hb_interval;
-
-                        // Start heartbeat task
-                        let writer_clone = Arc::clone(writer);
-                        let seq_clone = Arc::clone(sequence);
-                        let awaiting_ack_clone = Arc::clone(awaiting_ack);
-                        let last_sent_clone = Arc::clone(last_sent);
-                        let interval_ms = hb_interval;
-
-                        // Reset heartbeat state for new connection
-                        awaiting_ack.store(false, Ordering::SeqCst);
-                        *last_sent.write().await = None;
-
-                        if let Some(handle) = heartbeat_handle.take() {
-                            handle.abort();
-                        }
-
-                        *heartbeat_handle = Some(tokio::spawn(async move {
-                            // Jittered first heartbeat per Discord gateway spec
-                            let initial_delay_ms = (interval_ms as f64 * rand::random::<f64>()) as u64;
-                            tokio::time::sleep(Duration::from_millis(initial_delay_ms)).await;
-
-                            let mut ticker = tokio::time::interval(Duration::from_millis(interval_ms));
-                            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                            // Consume the immediate first tick — we already waited the jittered delay above.
-                            ticker.tick().await;
-
-                            // Send the first (jittered) heartbeat immediately so the loop body
-                            // can uniformly handle subsequent ticks below.
-                            {
-                                let seq = *seq_clone.read().await;
-                                let heartbeat = json!({ "op": 1, "d": seq });
-                                if let Some(ref mut w) = *writer_clone.write().await {
-                                    if let Err(e) = w.send(WsMessage::Text(heartbeat.to_string().into())).await {
-                                        error!(error = %e, "Failed to send initial (jittered) heartbeat");
-                                        return;
-                                    }
-                                    *last_sent_clone.write().await = Some(Instant::now());
-                                    awaiting_ack_clone.store(true, Ordering::SeqCst);
-                                    debug!("Sent jittered initial heartbeat after {}ms, awaiting ACK", initial_delay_ms);
-                                }
-                            }
-
-                            loop {
-                                ticker.tick().await;
-
-                                // Check if we're still waiting for an ACK from the previous heartbeat
-                                if awaiting_ack_clone.load(Ordering::SeqCst) {
-                                    if let Some(sent_time) = *last_sent_clone.read().await {
-                                        let elapsed = sent_time.elapsed();
-
-                                        // If we've been waiting for more than 2 heartbeat intervals
-                                        // since we sent the heartbeat, connection is likely dead
-                                        if elapsed > Duration::from_millis(interval_ms * 2) {
-                                            error!(elapsed = ?elapsed, "No heartbeat ACK received since last heartbeat sent (>2 intervals). Connection may be zombie.");
-                                            // Break out to trigger reconnection
-                                            break;
-                                        }
-
-                                        warn!("Still awaiting heartbeat ACK after {:?} since last send. Sending heartbeat anyway.", elapsed);
-                                    }
-                                }
-
-                                let seq = *seq_clone.read().await;
-                                let heartbeat = json!({ "op": 1, "d": seq });
-                                if let Some(ref mut w) = *writer_clone.write().await {
-                                    if let Err(e) = w.send(WsMessage::Text(heartbeat.to_string().into())).await {
-                                        error!(error = %e, "Failed to send heartbeat");
-                                        break;
-                                    }
-                                    // Record when we sent this heartbeat and mark awaiting ACK
-                                    *last_sent_clone.write().await = Some(Instant::now());
-                                    awaiting_ack_clone.store(true, Ordering::SeqCst);
-                                    debug!("Sent heartbeat, awaiting ACK");
-                                }
-                            }
-                        }));
-
-                        // Wait briefly then send identify or resume
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-
-                        let has_session = {
-                            let sid = session_id.read().await;
-                            let seq = sequence.read().await;
-                            sid.is_some() && seq.is_some()
-                        };
-
-                        if has_session {
-                            *stage.write().await = ConnectionStage::Resuming;
-                            Self::send_resume(writer, token, session_id, sequence).await?;
-                        } else {
-                            *stage.write().await = ConnectionStage::Identifying;
-                            Self::send_identify(writer, token, custom_status, capabilities, intents, large_threshold, shard).await?;
-                        }
-                    }
-                }
-            }
-            Opcode::HeartbeatAck => {
-                // Compute round-trip latency from the most recent heartbeat send time.
-                if let Some(sent) = *last_sent.read().await {
-                    *latency.write().await = Some(sent.elapsed());
-                }
-                // Clear the awaiting flag — the heartbeat was acknowledged
-                awaiting_ack.store(false, Ordering::SeqCst);
-                debug!("Received heartbeat ACK");
-            }
-            Opcode::Dispatch => {
-                if let Some(event_type) = &payload.t {
-                    debug!("Dispatch event: {}", event_type);
-
-                    // Capture session_id from READY event; prime pending-guild counter.
-                    if event_type == "READY" {
-                        *stage.write().await = ConnectionStage::Connected;
-                        if let Some(d) = &payload.d {
-                            if let Some(sid) = d["session_id"].as_str() {
-                                *session_id.write().await = Some(sid.to_string());
-                                // Demoted to debug: session_id is a
-                                // re-identification credential that lets a
-                                // holder resume our gateway. Don't ship it
-                                // into stderr/log files at info level.
-                                debug!("Captured session_id: {}", sid);
-                            }
-                            // Count unavailable guilds so we know when CACHE_READY fires.
-                            let guild_count = d["guilds"].as_array().map(|g| g.len()).unwrap_or(0);
-                            pending_guilds.store(guild_count, Ordering::SeqCst);
-                            debug!("READY: waiting for {} GUILD_CREATE(s) before CACHE_READY", guild_count);
-                            if guild_count == 0 {
-                                // No guilds — fire immediately after READY is dispatched.
-                                let cache_ready = DispatchEvent::new("CACHE_READY".to_string(), Value::Null);
-                                if let Err(e) = event_sender.send(cache_ready) {
-                                    warn!("Failed to dispatch CACHE_READY: {}", e);
-                                }
-                            }
-                        }
-                    }
-
-                    // Each GUILD_CREATE decrements the pending counter.
-                    // When it reaches zero, all guilds are populated — fire CACHE_READY.
-                    // Note: fetch_update only decrements if n > 0, so stray GUILD_CREATE
-                    // events arriving before READY (n == 0) are silently ignored and will
-                    // not trigger CACHE_READY. This is intentional — READY sets the counter.
-                    if event_type == "GUILD_CREATE" {
-                        let prev = pending_guilds.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| if n > 0 { Some(n - 1) } else { None });
-                        if let Ok(1) = prev {
-                            // We just decremented from 1 → 0: all guilds are ready.
-                            info!("All guilds received — firing CACHE_READY");
-                            let cache_ready = DispatchEvent::new("CACHE_READY".to_string(), Value::Null);
-                            if let Err(e) = event_sender.send(cache_ready) {
-                                warn!("Failed to dispatch CACHE_READY: {}", e);
-                            }
-                        }
-                    }
-
-                    // Mark stage as connected after successful RESUME acknowledgment
-                    if event_type == "RESUMED" {
-                        *stage.write().await = ConnectionStage::Connected;
-                        info!("Session successfully resumed");
-                    }
-
-                    let event = DispatchEvent::new(event_type.clone(), payload.d.unwrap_or(Value::Null));
-                    if let Err(e) = event_sender.send(event) {
-                        warn!("Failed to dispatch event '{}': no active receivers ({})", event_type, e);
-                    }
-                }
-            }
-            Opcode::Reconnect => {
-                warn!("Received reconnect request from Discord gateway");
-                // Return an error to break the message loop and trigger reconnection
-                // The caller should use connect_with_auto_reconnect to handle this gracefully
-                return Err(crate::error::DiscordError::GatewayReconnectRequested);
-            }
-            Opcode::InvalidSession => {
-                // Per docs the `d` field is a boolean: true means the session is
-                // still resumable (Discord just dropped this socket), false means
-                // it's gone for good and we must re-IDENTIFY from scratch.
-                let resumable = payload.d.as_ref().and_then(|v| v.as_bool()).unwrap_or(false);
-                warn!(resumable, "Received Invalid Session (op 9)");
-
-                // Discord docs recommend a small randomized delay before responding
-                // to op 9 so a herd of clients don't reconnect simultaneously.
-                let delay_ms = 1000 + (rand::random::<u64>() % 4000);
-                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-
-                if resumable {
-                    // Attempt RESUME with the existing session if we still have it.
-                    let has_session = {
-                        let sid = session_id.read().await;
-                        let seq = sequence.read().await;
-                        sid.is_some() && seq.is_some()
-                    };
-                    if has_session {
-                        *stage.write().await = ConnectionStage::Resuming;
-                        Self::send_resume(writer, token, session_id, sequence).await?;
-                    } else {
-                        warn!("Op 9 said resumable but no cached session_id/seq — re-identifying instead");
-                        *stage.write().await = ConnectionStage::Identifying;
-                        Self::send_identify(writer, token, custom_status, capabilities, intents, large_threshold, shard).await?;
-                    }
-                } else {
-                    // Session is gone — clear state and perform a full IDENTIFY.
-                    *session_id.write().await = None;
-                    *sequence.write().await = None;
-                    *stage.write().await = ConnectionStage::Identifying;
-                    Self::send_identify(writer, token, custom_status, capabilities, intents, large_threshold, shard).await?;
-                }
-            }
-            _ => {
-                debug!("Received opcode: {:?}", opcode);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Send the resume payload to reconnect
-    async fn send_resume(writer: &Arc<RwLock<Option<WsWriter>>>, token: &str, session_id: &Arc<RwLock<Option<String>>>, sequence: &Arc<RwLock<Option<u64>>>) -> Result<()> {
-        let sid = session_id.read().await;
-        let seq = sequence.read().await;
-
-        if let (Some(sid), Some(seq)) = (sid.as_ref(), *seq) {
-            let resume = json!({
-                "op": 6,
-                "d": {
-                    "token": token,
-                    "session_id": sid,
-                    "seq": seq
-                }
-            });
-
-            if let Some(ref mut w) = *writer.write().await {
-                w.send(WsMessage::Text(resume.to_string().into())).await?;
-                // session_id is sensitive (see READY handler note); demoted.
-                debug!("Sent resume payload (session: {}, seq: {})", sid, seq);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Send the identify payload to authenticate.
-    ///
-    /// `intents` is honoured for bot-token connections — when `Some` we add an
-    /// `intents` field to the payload alongside the existing `capabilities`
-    /// field used for user tokens. `large_threshold` is forwarded as required
-    /// by the Discord docs (valid range 50–250; clamped here as belt-and-braces).
-    // TODO: route `large_threshold` through `DiscordUserBuilder` so callers can
-    // tune it without touching `Gateway` directly.
-    async fn send_identify(writer: &Arc<RwLock<Option<WsWriter>>>, token: &str, status: UserStatus, capabilities: u32, intents: Option<u64>, large_threshold: u16, shard: Option<[u32; 2]>) -> Result<()> {
-        let large_threshold = large_threshold.clamp(50, 250);
-        // Discord's gateway IDENTIFY expects the raw token in the `token`
-        // field — no `Bot ` / `Bearer ` prefix. The same token in
-        // `DiscordHttpClient` carries the prefix verbatim for the HTTP
-        // `Authorization` header (see `client::DiscordHttpClient::auth_header_value`),
-        // so we strip it here for the gateway payload only.
-        let identify_token = token.strip_prefix("Bot ").or_else(|| token.strip_prefix("Bearer ")).unwrap_or(token);
-        let mut data = json!({
-            "token": identify_token,
-            "capabilities": capabilities,
-            "large_threshold": large_threshold,
-            "properties": {
-                "os": "Windows",
-                "browser": "Chrome",
-                "device": "",
-                "system_locale": "en-US",
-                "browser_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "browser_version": "120.0.0.0",
-                "os_version": "10",
-                "referrer": "",
-                "referring_domain": "",
-                "referrer_current": "",
-                "referring_domain_current": "",
-                "release_channel": "stable",
-                "client_build_number": client_build_number().await,
-                "client_event_source": null
-            },
-            "presence": {
-                "status": status.as_str(),
-                "since": 0,
-                "activities": [],
-                "afk": false
-            },
-            "compress": false,
-            "client_state": {
-                "guild_versions": {},
-                "highest_last_message_id": "0",
-                "read_state_version": 0,
-                "user_guild_settings_version": -1,
-                "private_channels_version": "0",
-                "api_code_version": 0
-            }
-        });
-
-        // Bot-token mode: include `intents` alongside `capabilities`. User-token
-        // mode (intents == None) keeps the existing payload shape unchanged.
-        if let Some(intents) = intents {
-            if let Some(obj) = data.as_object_mut() {
-                obj.insert("intents".to_string(), Value::from(intents));
-            }
-        }
-
-        // Sharding: Discord requires sharding once a bot reaches 2 500 guilds and
-        // emits close code 4011 ("sharding required") if absent. Shape: [id, count].
-        if let Some([shard_id, shard_count]) = shard {
-            if let Some(obj) = data.as_object_mut() {
-                obj.insert("shard".to_string(), json!([shard_id, shard_count]));
-            }
-        }
-
-        let identify = json!({ "op": 2, "d": data });
-
-        if let Some(ref mut w) = *writer.write().await {
-            w.send(WsMessage::Text(identify.to_string().into())).await?;
-            info!("Sent identify payload");
-        }
-
-        Ok(())
     }
 
     /// Send a Voice State Update (opcode 4) to join, move, or leave a voice
@@ -1069,12 +676,12 @@ impl Gateway {
             let _ = w.close().await;
         }
         *self.writer.write().await = None;
-        *self.stage.write().await = ConnectionStage::Disconnected;
+        self.shared().stage = ConnectionStage::Disconnected;
     }
 
     /// Get current connection stage
     pub async fn stage(&self) -> ConnectionStage {
-        *self.stage.read().await
+        self.shared().stage
     }
 
     /// Return the round-trip gateway latency measured from the most recent
@@ -1082,7 +689,7 @@ impl Gateway {
     ///
     /// Mirrors serenity's `Shard::latency()`.
     pub async fn latency(&self) -> Option<Duration> {
-        *self.latency.read().await
+        self.shared().latency
     }
 
     /// Return whether the next reconnection should attempt a RESUME or a full
@@ -1091,13 +698,205 @@ impl Gateway {
     /// Returns `Resume` when a `session_id` is cached from the last READY
     /// event, `Reidentify` otherwise.
     pub async fn reconnection_type(&self) -> ReconnectType {
-        if self.session_id.read().await.is_some() {
+        if self.shared().has_session {
             ReconnectType::Resume
         } else {
             ReconnectType::Reidentify
         }
     }
+}
 
+/// The task that owns the socket's read half and the [`GatewayCore`].
+///
+/// It reads frames, wakes at the core's deadlines, carries out the core's
+/// actions, and reconnects when a connection ends.
+struct Supervisor {
+    core: GatewayCore,
+    identify: IdentifyDefaults,
+    writer: Arc<RwLock<Option<WsWriter>>>,
+    event_sender: broadcast::Sender<DispatchEvent>,
+    shared: Arc<Mutex<Shared>>,
+}
+
+impl Supervisor {
+    /// Run until shutdown or a fatal close.
+    async fn run(mut self, initial_reader: WsReader, mut shutdown_rx: mpsc::Receiver<()>) {
+        // The first iteration uses the reader from the initial connect();
+        // subsequent iterations re-establish the WebSocket here.
+        let mut current_reader: Option<WsReader> = Some(initial_reader);
+        let mut backoff_secs: u64 = 1;
+        const MAX_BACKOFF_SECS: u64 = 60;
+        const RECONNECT_PAUSE: Duration = Duration::from_millis(500);
+
+        'supervisor: loop {
+            // ── 1. Acquire a reader: initial, or reconnect with backoff ──
+            let mut reader = match current_reader.take() {
+                Some(r) => r,
+                None => {
+                    info!(backoff_secs, "Reconnecting to Discord gateway…");
+                    self.core.connecting();
+                    self.publish();
+                    // Drop any stale writer before opening a new socket.
+                    *self.writer.write().await = None;
+
+                    match connect_async(self.core.connect_url()).await {
+                        Ok((ws_stream, _)) => {
+                            let (w, r) = ws_stream.split();
+                            *self.writer.write().await = Some(w);
+                            info!("Gateway reconnected successfully");
+                            backoff_secs = 1;
+                            self.core.opened(Instant::now());
+                            r
+                        }
+                        Err(e) => {
+                            error!(error = %e, backoff_secs, "Gateway reconnect failed; sleeping before retry");
+                            tokio::select! {
+                                _ = shutdown_rx.recv() => break 'supervisor,
+                                _ = tokio::time::sleep(Duration::from_secs(backoff_secs)) => {}
+                            }
+                            backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
+                            continue 'supervisor;
+                        }
+                    }
+                }
+            };
+
+            // ── 2. Read until the connection ends ──
+            let outcome = self.read_connection(&mut reader, &mut shutdown_rx).await;
+
+            // ── 3. Decide what to do next ──
+            match outcome {
+                GatewayLoopOutcome::Shutdown => {
+                    self.core.connection_lost(false);
+                    break 'supervisor;
+                }
+                GatewayLoopOutcome::Fatal { code, reason } => {
+                    error!(close_code = code, reason, "Gateway closed with fatal code; not reconnecting");
+                    self.core.connection_lost(false);
+                    break 'supervisor;
+                }
+                GatewayLoopOutcome::Reconnect(ReconnectCause::Identify) => {
+                    self.core.connection_lost(true);
+                    info!("Clearing session state; will re-identify on reconnect");
+                }
+                GatewayLoopOutcome::Reconnect(_) => {
+                    self.core.connection_lost(false);
+                    info!("Gateway disconnected; will attempt to resume on reconnect");
+                }
+            }
+            self.publish();
+
+            // Brief pause before reconnecting to avoid a tight loop on rapid
+            // disconnects; full backoff applies only when the WS connect itself fails.
+            tokio::select! {
+                _ = shutdown_rx.recv() => break 'supervisor,
+                _ = tokio::time::sleep(RECONNECT_PAUSE) => {}
+            }
+            // current_reader stays None — the loop reconnects.
+        }
+
+        self.publish();
+        info!("Gateway supervisor task exiting");
+    }
+
+    /// Read one connection until it ends, running the core's actions.
+    async fn read_connection(&mut self, reader: &mut WsReader, shutdown_rx: &mut mpsc::Receiver<()>) -> GatewayLoopOutcome {
+        loop {
+            let deadline = self.core.next_deadline();
+            let wake = async {
+                match deadline {
+                    Some(at) => tokio::time::sleep_until(at.into()).await,
+                    None => std::future::pending().await,
+                }
+            };
+
+            let actions = tokio::select! {
+                _ = shutdown_rx.recv() => {
+                    info!("Gateway shutdown requested");
+                    return GatewayLoopOutcome::Shutdown;
+                }
+                msg = reader.next() => match msg {
+                    Some(Ok(WsMessage::Text(text))) => self.core.frame(text.as_str(), Instant::now(), rand::random()),
+                    Some(Ok(WsMessage::Binary(bytes))) => {
+                        // Discord may send zlib-compressed JSON payloads as binary frames.
+                        match Gateway::decompress_zlib(&bytes) {
+                            Ok(text) => self.core.frame(&text, Instant::now(), rand::random()),
+                            Err(e) => {
+                                warn!("Failed to decompress binary gateway frame ({} bytes): {}", bytes.len(), e);
+                                continue;
+                            }
+                        }
+                    }
+                    Some(Ok(WsMessage::Close(frame))) => {
+                        let close_code: Option<u16> = frame.as_ref().map(|f| u16::from(f.code));
+                        match &frame {
+                            Some(f) => info!("Gateway connection closed: code={} reason={}", f.code, f.reason),
+                            None => info!("Gateway connection closed"),
+                        }
+                        return classify_close(close_code);
+                    }
+                    Some(Err(e)) => {
+                        error!(error = %e, "WebSocket error");
+                        return GatewayLoopOutcome::Reconnect(ReconnectCause::Failure);
+                    }
+                    None => {
+                        info!("WebSocket stream ended");
+                        return GatewayLoopOutcome::Reconnect(ReconnectCause::Failure);
+                    }
+                    _ => continue,
+                },
+                _ = wake => self.core.tick(Instant::now(), rand::random()),
+            };
+
+            if let Some(outcome) = self.run_actions(actions).await {
+                return outcome;
+            }
+        }
+    }
+
+    /// Carry out the core's actions. Returns an outcome when one of them ends
+    /// the connection.
+    async fn run_actions(&mut self, actions: Vec<Action>) -> Option<GatewayLoopOutcome> {
+        for action in actions {
+            match action {
+                Action::Send(text) => {
+                    if let Err(e) = send_text(&self.writer, text).await {
+                        error!(error = %e, "Failed to send gateway frame");
+                    }
+                }
+                Action::Identify => {
+                    let d = self.identify.payload(self.core.token()).await;
+                    match send_text(&self.writer, json!({ "op": 2, "d": d }).to_string()).await {
+                        Ok(()) => info!("Sent identify payload"),
+                        Err(e) => error!(error = %e, "Failed to send identify payload"),
+                    }
+                }
+                Action::Dispatch { event_type, data } => {
+                    if let Err(e) = self.event_sender.send(DispatchEvent::new(event_type.clone(), data)) {
+                        warn!("Failed to dispatch event '{}': no active receivers ({})", event_type, e);
+                    }
+                }
+                Action::Reconnect { cause, reason } => {
+                    warn!(?cause, reason, "Ending gateway connection");
+                    self.publish();
+                    return Some(GatewayLoopOutcome::Reconnect(cause));
+                }
+            }
+        }
+        self.publish();
+        None
+    }
+
+    /// Copy the core's state into the snapshot the public getters read.
+    fn publish(&self) {
+        let mut shared = self.shared.lock().unwrap_or_else(|e| e.into_inner());
+        shared.stage = self.core.stage();
+        shared.latency = self.core.latency();
+        shared.has_session = self.core.session_id().is_some();
+    }
+}
+
+impl Gateway {
     /// Decompress a zlib-compressed binary WebSocket frame into a UTF-8 string.
     ///
     /// Discord sends zlib-compressed gateway payloads as raw deflate or zlib
@@ -1126,5 +925,48 @@ impl Drop for Gateway {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.try_send(());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn outcome(code: u16) -> String {
+        format!("{:?}", classify_close(Some(code)))
+    }
+
+    #[test]
+    fn close_codes_classify_as_in_0_6_1() {
+        for code in [4000, 4001, 4002, 4005, 4008, 1000, 1001, 1006, 4999] {
+            assert_eq!(outcome(code), "Reconnect(Resume)", "code {code}");
+        }
+        for code in [4003, 4007, 4009] {
+            assert_eq!(outcome(code), "Reconnect(Identify)", "code {code}");
+        }
+        for code in [4004, 4010, 4011, 4012, 4013, 4014] {
+            assert!(outcome(code).starts_with("Fatal"), "code {code}");
+        }
+        assert_eq!(format!("{:?}", classify_close(None)), "Reconnect(Resume)");
+    }
+
+    #[test]
+    fn identify_strips_the_token_prefix_and_keeps_the_default_fingerprint() {
+        let d = identify_payload("Bot abc", UserStatus::Online, DEFAULT_CAPABILITIES, None, 500, None, 7);
+        assert_eq!(d["token"], "abc");
+        assert_eq!(d["capabilities"], 16381);
+        assert_eq!(d["large_threshold"], 250);
+        assert_eq!(d["properties"]["os"], "Windows");
+        assert_eq!(d["properties"]["browser_version"], "120.0.0.0");
+        assert_eq!(d["properties"]["client_build_number"], 7);
+        assert!(d.get("intents").is_none());
+        assert!(d.get("shard").is_none());
+    }
+
+    #[test]
+    fn identify_adds_intents_and_shard_when_set() {
+        let d = identify_payload("abc", UserStatus::Online, 0, Some(513), 50, Some([1, 4]), 7);
+        assert_eq!(d["intents"], 513);
+        assert_eq!(d["shard"], json!([1, 4]));
     }
 }
