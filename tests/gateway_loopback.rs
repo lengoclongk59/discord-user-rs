@@ -194,7 +194,7 @@ async fn ready_and_dispatches_reach_subscribers() {
     conn.dispatch("MESSAGE_CREATE", 2, json!({ "id": "10", "content": "hi" })).await;
 
     let order: Vec<String> = [next_event(&mut rx).await, next_event(&mut rx).await, next_event(&mut rx).await].into_iter().map(|e| e.event_type).collect();
-    assert_eq!(order, ["CACHE_READY", "READY", "MESSAGE_CREATE"]);
+    assert_eq!(order, ["READY", "CACHE_READY", "MESSAGE_CREATE"]);
     wait_for_stage(&gw, ConnectionStage::Connected).await;
     assert_eq!(gw.reconnection_type().await, ReconnectType::Resume);
 

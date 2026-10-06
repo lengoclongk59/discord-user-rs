@@ -317,6 +317,9 @@ impl GatewayCore {
 
     fn on_dispatch(&mut self, event_type: String, d: Option<Value>, actions: &mut Vec<Action>) {
         debug!("Dispatch event: {}", event_type);
+        // CACHE_READY follows the dispatch that completes the cache, so a
+        // subscriber never hears "ready" before the last guild it covers.
+        let mut cache_is_ready = false;
         match event_type.as_str() {
             "READY" => {
                 self.stage = ConnectionStage::Connected;
@@ -332,9 +335,7 @@ impl GatewayCore {
                     self.resume_url = d["resume_gateway_url"].as_str().map(|url| with_query_of(url, &self.base_url));
                     self.pending_guilds = d["guilds"].as_array().map_or(0, Vec::len);
                     debug!("READY: waiting for {} GUILD_CREATE(s) before CACHE_READY", self.pending_guilds);
-                    if self.pending_guilds == 0 {
-                        actions.push(cache_ready());
-                    }
+                    cache_is_ready = self.pending_guilds == 0;
                 }
             }
             // GUILD_CREATE before READY (counter at 0) is ignored on purpose:
@@ -343,7 +344,7 @@ impl GatewayCore {
                 self.pending_guilds -= 1;
                 if self.pending_guilds == 0 {
                     info!("All guilds received — firing CACHE_READY");
-                    actions.push(cache_ready());
+                    cache_is_ready = true;
                 }
             }
             "RESUMED" => {
@@ -355,6 +356,9 @@ impl GatewayCore {
             _ => {}
         }
         actions.push(Action::Dispatch { event_type, data: d.unwrap_or(Value::Null) });
+        if cache_is_ready {
+            actions.push(cache_ready());
+        }
     }
 
     /// Advance the clock. Fires whatever is due at `now`.
@@ -517,8 +521,8 @@ mod tests {
         let (mut core, t0) = after_hello(45_000);
         let actions = frame(&mut core, &ready("sess"), t0, 0.5);
         assert_eq!(actions.len(), 2);
-        assert_eq!(actions[0], cache_ready());
-        assert!(matches!(&actions[1], Action::Dispatch { event_type, .. } if event_type == "READY"));
+        assert!(matches!(&actions[0], Action::Dispatch { event_type, .. } if event_type == "READY"));
+        assert_eq!(actions[1], cache_ready(), "CACHE_READY follows READY");
         assert_eq!(core.stage(), ConnectionStage::Connected);
         assert_eq!(core.session_id(), Some("sess"));
         assert!(core.has_session());
@@ -531,8 +535,9 @@ mod tests {
         let first = frame(&mut core, &dispatch("GUILD_CREATE", 2, json!({ "id": "1" })), t0, 0.5);
         assert_eq!(first.len(), 1);
         let second = frame(&mut core, &dispatch("GUILD_CREATE", 3, json!({ "id": "2" })), t0, 0.5);
-        assert_eq!(second[0], cache_ready());
         assert_eq!(second.len(), 2);
+        assert!(matches!(&second[0], Action::Dispatch { event_type, .. } if event_type == "GUILD_CREATE"));
+        assert_eq!(second[1], cache_ready(), "CACHE_READY follows the last GUILD_CREATE");
     }
 
     #[test]

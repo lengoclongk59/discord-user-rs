@@ -40,6 +40,10 @@ observable timing for every current user. Plan and findings:
   writer outlived the supervisor. The writer is now cleared.
 - RESUME strips a `Bot ` / `Bearer ` prefix from the token, as IDENTIFY
   already did.
+- The synthetic `CACHE_READY` dispatch now follows the event that completes
+  the cache (READY with no guilds, or the last `GUILD_CREATE`). It used to be
+  sent just before that event, so a subscriber heard "ready" before the last
+  guild it covered.
 - Crates that depend on this one no longer fail to build with E0433 in
   `events.rs`. Named listener tasks (`tokio::task::Builder`) are now used
   only under `--cfg tokio_unstable`; without it, listeners are spawned with
