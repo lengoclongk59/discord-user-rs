@@ -4,10 +4,19 @@
 //! at it with `with_url`, and the client build number is pinned so IDENTIFY
 //! never fetches it from discord.com.
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
+};
 
-use discord_user::{gateway::Gateway, ConnectionStage, DispatchEvent, ReconnectType, UserStatus};
-use futures::{SinkExt, StreamExt};
+use discord_user::{
+    gateway::{default_close_verdict, CloseVerdict, FrameBuffer, Gateway, GatewayEvent, GatewayEvents, GatewayHooks, GatewayStatus, IdentifyDefaults, ReconnectCause},
+    ConnectionStage, DiscordError, DispatchEvent, ReconnectType, UserStatus,
+};
+use futures::{future::BoxFuture, SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::{
     net::{TcpListener, TcpStream},
@@ -36,7 +45,7 @@ struct Server {
 }
 
 /// A request URI recorded during the WebSocket upgrade.
-type SeenUri = std::sync::Arc<std::sync::Mutex<String>>;
+type SeenUri = Arc<Mutex<String>>;
 
 impl Server {
     async fn bind() -> Self {
@@ -307,6 +316,260 @@ async fn non_resumable_op_9_identifies_after_the_jittered_wait() {
     assert!(waited >= Duration::from_millis(950), "re-identified after {waited:?}");
     conn.hello(QUIET_INTERVAL_MS).await;
     conn.recv_op(2).await;
+
+    gw.disconnect().await;
+}
+
+// ── Phase 3: caller hooks and the ordered event stream ──
+
+async fn next_gateway_event(events: &mut GatewayEvents) -> GatewayEvent {
+    timeout(WAIT, events.recv()).await.expect("no gateway event within the wait").expect("event stream closed")
+}
+
+/// The next status event, skipping frames and lag reports.
+async fn next_status(events: &mut GatewayEvents) -> (GatewayStatus, Option<String>) {
+    loop {
+        if let GatewayEvent::Status { status, detail } = next_gateway_event(events).await {
+            return (status, detail);
+        }
+    }
+}
+
+/// Fast, fixed reconnect pacing so hook tests do not wait out the ladder.
+fn quick_delay(backoff: Duration) -> (Duration, Duration) {
+    (Duration::from_millis(50), backoff)
+}
+
+#[tokio::test]
+async fn frames_stream_reports_every_frame_and_each_status_change() {
+    let server = Server::bind().await;
+    let (mut gw, _rx) = gateway(&server.url);
+    let mut events = gw.frames(FrameBuffer::Unbounded).unwrap();
+    assert!(gw.frames(FrameBuffer::Unbounded).is_none(), "the receiver is handed out once");
+    let (connected, mut conn) = tokio::join!(gw.connect(), server.accept());
+    connected.unwrap();
+
+    conn.identify_and_ready("sess-1", "ws://127.0.0.1:9").await;
+    conn.dispatch("MESSAGE_CREATE", 2, json!({ "content": "hi" })).await;
+
+    assert_eq!(next_gateway_event(&mut events).await, GatewayEvent::Status { status: GatewayStatus::Connecting, detail: None });
+    let GatewayEvent::Frame { op: 10, s: None, t: None, raw } = next_gateway_event(&mut events).await else { panic!("expected HELLO") };
+    assert_eq!(serde_json::from_str::<Value>(&raw).unwrap()["d"]["heartbeat_interval"], QUIET_INTERVAL_MS);
+    let GatewayEvent::Frame { op: 0, s: Some(1), t: Some(t), .. } = next_gateway_event(&mut events).await else { panic!("expected READY") };
+    assert_eq!(t, "READY");
+    assert_eq!(next_gateway_event(&mut events).await, GatewayEvent::Status { status: GatewayStatus::Live, detail: None });
+    let GatewayEvent::Frame { s: Some(2), raw, .. } = next_gateway_event(&mut events).await else { panic!("expected MESSAGE_CREATE") };
+    assert!(raw.contains("\"content\":\"hi\""), "raw frame is passed through: {raw}");
+
+    gw.disconnect().await;
+    assert_eq!(next_gateway_event(&mut events).await, GatewayEvent::Status { status: GatewayStatus::Stopped, detail: Some("shutdown".to_string()) });
+    assert!(timeout(WAIT, events.recv()).await.unwrap().is_none(), "the stream closes after Stopped");
+}
+
+#[tokio::test]
+async fn rejected_token_reports_auth_failed_then_stopped() {
+    let server = Server::bind().await;
+    let (mut gw, _rx) = gateway(&server.url);
+    let mut events = gw.frames(FrameBuffer::Unbounded).unwrap();
+    let (connected, mut conn) = tokio::join!(gw.connect(), server.accept());
+    connected.unwrap();
+    conn.hello(QUIET_INTERVAL_MS).await;
+    conn.recv_op(2).await;
+
+    conn.close(4004).await;
+
+    assert_eq!(next_status(&mut events).await.0, GatewayStatus::Connecting);
+    assert_eq!(next_status(&mut events).await, (GatewayStatus::AuthFailed, Some("close 4004: test".to_string())));
+    assert_eq!(next_status(&mut events).await, (GatewayStatus::Stopped, Some("Authentication failed".to_string())));
+    assert!(timeout(WAIT, events.recv()).await.unwrap().is_none());
+    assert!(!gw.is_connected().await, "is_connected agrees with Stopped");
+}
+
+/// Hands out tokens from a list and re-harvests after a 4004.
+struct Reharvest {
+    tokens: Mutex<Vec<&'static str>>,
+    invalidated: AtomicUsize,
+}
+
+impl GatewayHooks for Reharvest {
+    fn token<'a>(&'a self, _configured: &'a str) -> BoxFuture<'a, Option<String>> {
+        Box::pin(async move { Some(self.tokens.lock().unwrap().remove(0).to_string()) })
+    }
+
+    fn invalidate(&self) {
+        self.invalidated.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn on_close(&self, code: Option<u16>, _reason: &str) -> CloseVerdict {
+        match code {
+            Some(4004) => CloseVerdict::Identify,
+            other => default_close_verdict(other),
+        }
+    }
+
+    fn delay(&self, _cause: ReconnectCause, backoff: Duration, _held: bool, _rand: f64) -> (Duration, Duration) {
+        quick_delay(backoff)
+    }
+}
+
+#[tokio::test]
+async fn token_hook_is_asked_before_every_connect_and_4004_can_reharvest() {
+    let server = Server::bind().await;
+    let hooks = Arc::new(Reharvest { tokens: Mutex::new(vec!["tok-1", "tok-2"]), invalidated: AtomicUsize::new(0) });
+    let (gw, _rx) = gateway(&server.url);
+    let mut gw = gw.with_hooks(hooks.clone());
+    let mut events = gw.frames(FrameBuffer::Unbounded).unwrap();
+    let (connected, mut conn) = tokio::join!(gw.connect(), server.accept());
+    connected.unwrap();
+    conn.hello(QUIET_INTERVAL_MS).await;
+    assert_eq!(conn.recv_op(2).await["d"]["token"], "tok-1");
+
+    conn.close(4004).await;
+
+    let mut conn = server.accept().await;
+    conn.hello(QUIET_INTERVAL_MS).await;
+    assert_eq!(conn.recv_op(2).await["d"]["token"], "tok-2");
+    assert_eq!(hooks.invalidated.load(Ordering::SeqCst), 1);
+    assert_eq!(next_status(&mut events).await.0, GatewayStatus::Connecting);
+    assert_eq!(next_status(&mut events).await.0, GatewayStatus::AuthFailed);
+    assert_eq!(next_status(&mut events).await.0, GatewayStatus::Connecting, "AuthFailed is not terminal");
+
+    gw.disconnect().await;
+}
+
+#[tokio::test]
+async fn a_changed_token_identifies_instead_of_resuming() {
+    let server = Server::bind().await;
+    let resume_server = Server::bind().await;
+    let hooks = Arc::new(Reharvest { tokens: Mutex::new(vec!["tok-1", "tok-2"]), invalidated: AtomicUsize::new(0) });
+    let (gw, _rx) = gateway(&server.url);
+    let mut gw = gw.with_hooks(hooks);
+    let (connected, mut conn) = tokio::join!(gw.connect(), server.accept());
+    connected.unwrap();
+    conn.identify_and_ready("sess-1", &resume_server.bare_url()).await;
+    wait_for_stage(&gw, ConnectionStage::Connected).await;
+
+    conn.send(json!({ "op": 7, "d": null })).await;
+
+    // The session belonged to tok-1, so the reconnect skips the resume URL.
+    let mut conn = server.accept().await;
+    conn.hello(QUIET_INTERVAL_MS).await;
+    assert_eq!(conn.recv_op(2).await["d"]["token"], "tok-2");
+
+    gw.disconnect().await;
+}
+
+struct NoCredential;
+
+impl GatewayHooks for NoCredential {
+    fn token<'a>(&'a self, _configured: &'a str) -> BoxFuture<'a, Option<String>> {
+        Box::pin(async { None })
+    }
+}
+
+#[tokio::test]
+async fn connect_without_a_credential_fails() {
+    let server = Server::bind().await;
+    let (gw, _rx) = gateway(&server.url);
+    let mut gw = gw.with_hooks(Arc::new(NoCredential));
+    assert!(matches!(gw.connect().await, Err(DiscordError::GatewayConnection(_))));
+    assert!(server.accept_within(Duration::from_millis(300)).await.is_none());
+}
+
+/// Sends fms-dash's IDENTIFY shape and stops on any 4000.
+struct LinuxClient;
+
+impl GatewayHooks for LinuxClient {
+    fn identify<'a>(&'a self, token: &'a str, _defaults: &'a IdentifyDefaults) -> BoxFuture<'a, Value> {
+        Box::pin(async move { json!({ "token": token, "capabilities": 0, "properties": { "os": "Linux", "browser": "Chrome" } }) })
+    }
+
+    fn on_close(&self, code: Option<u16>, reason: &str) -> CloseVerdict {
+        match code {
+            Some(4000) => CloseVerdict::Stop(format!("caller stopped on 4000 ({reason})")),
+            other => default_close_verdict(other),
+        }
+    }
+}
+
+#[tokio::test]
+async fn identify_and_close_hooks_replace_the_defaults() {
+    let server = Server::bind().await;
+    let (gw, _rx) = gateway(&server.url);
+    let mut gw = gw.with_hooks(Arc::new(LinuxClient));
+    let mut events = gw.frames(FrameBuffer::Unbounded).unwrap();
+    let (connected, mut conn) = tokio::join!(gw.connect(), server.accept());
+    connected.unwrap();
+    conn.hello(QUIET_INTERVAL_MS).await;
+    let identify = conn.recv_op(2).await;
+    assert_eq!(identify["d"], json!({ "token": TOKEN, "capabilities": 0, "properties": { "os": "Linux", "browser": "Chrome" } }));
+
+    conn.close(4000).await;
+
+    assert_eq!(next_status(&mut events).await.0, GatewayStatus::Connecting);
+    assert_eq!(next_status(&mut events).await, (GatewayStatus::Stopped, Some("caller stopped on 4000 (test)".to_string())));
+    assert!(server.accept_within(Duration::from_millis(500)).await.is_none());
+}
+
+struct QuickReconnect;
+
+impl GatewayHooks for QuickReconnect {
+    fn delay(&self, _cause: ReconnectCause, backoff: Duration, _held: bool, _rand: f64) -> (Duration, Duration) {
+        quick_delay(backoff)
+    }
+}
+
+#[tokio::test]
+async fn delay_hook_paces_reconnects() {
+    let server = Server::bind().await;
+    let (gw, _rx) = gateway(&server.url);
+    let mut gw = gw.with_hooks(Arc::new(QuickReconnect));
+    let (connected, mut conn) = tokio::join!(gw.connect(), server.accept());
+    connected.unwrap();
+    conn.identify_and_ready("sess-1", "ws://127.0.0.1:9").await;
+    wait_for_stage(&gw, ConnectionStage::Connected).await;
+
+    // 4009 would wait the 1-5 s IDENTIFY window by default.
+    conn.close(4009).await;
+    let closed = Instant::now();
+    let _conn = server.accept().await;
+    assert!(closed.elapsed() < Duration::from_millis(500), "reconnected after {:?}", closed.elapsed());
+
+    gw.disconnect().await;
+}
+
+#[tokio::test]
+async fn bounded_stream_counts_drops_and_never_stalls_the_reader() {
+    let server = Server::bind().await;
+    let (gw, _rx) = gateway(&server.url);
+    let mut gw = gw.with_hooks(Arc::new(QuickReconnect));
+    let mut events = gw.frames(FrameBuffer::Bounded(4)).unwrap();
+    let (connected, mut conn) = tokio::join!(gw.connect(), server.accept());
+    connected.unwrap();
+    conn.hello(600).await;
+    conn.recv_op(2).await;
+    conn.ready("sess-1", "ws://127.0.0.1:9").await;
+
+    // Nobody reads the stream while 200 dispatches arrive and heartbeats keep
+    // being acknowledged across several intervals.
+    for s in 2..202 {
+        conn.dispatch("TYPING_START", s, json!({})).await;
+    }
+    for _ in 0..4 {
+        conn.recv_op(1).await;
+        conn.send(json!({ "op": 11 })).await;
+    }
+    assert!(server.accept_within(Duration::from_millis(200)).await.is_none(), "the connection survived");
+    assert_eq!(gw.stage().await, ConnectionStage::Connected);
+
+    let buffered: Vec<GatewayEvent> = std::iter::from_fn(|| events.try_recv().ok()).collect();
+    assert_eq!(buffered.len(), 4);
+    conn.dispatch("MESSAGE_CREATE", 202, json!({})).await;
+    let GatewayEvent::Lagged { dropped } = next_gateway_event(&mut events).await else { panic!("expected Lagged") };
+    // The four kept are Connecting, HELLO, READY and Live; the 200
+    // dispatches and the 4 ACKs were dropped.
+    assert_eq!(dropped, 204);
+    let GatewayEvent::Frame { s: Some(202), .. } = next_gateway_event(&mut events).await else { panic!("expected the next frame") };
 
     gw.disconnect().await;
 }

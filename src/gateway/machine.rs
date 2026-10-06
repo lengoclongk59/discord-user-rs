@@ -80,6 +80,11 @@ pub fn plan_reconnect(cause: ReconnectCause, backoff: Duration, session_held: bo
 /// One thing the supervisor must do on the core's behalf.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Action {
+    /// A frame was decoded. Always the first action of [`GatewayCore::frame`],
+    /// so the raw frame reaches the event stream before anything it causes.
+    Received { op: u8, s: Option<u64>, t: Option<String> },
+    /// The connection reached READY or RESUMED.
+    Live,
     /// Write this text frame to the socket.
     Send(String),
     /// Build an IDENTIFY payload and send it. The payload needs the client
@@ -172,6 +177,18 @@ impl GatewayCore {
         }
     }
 
+    /// Use `token` for the next connection. A held session belongs to the
+    /// token it was opened with, so a different token drops it.
+    pub(crate) fn set_token(&mut self, token: String) {
+        if token != self.token {
+            if self.has_session() {
+                warn!("Gateway credential changed; dropping the session and identifying");
+            }
+            self.clear_session();
+            self.token = token;
+        }
+    }
+
     /// The supervisor is about to open a new socket.
     pub(crate) fn connecting(&mut self) {
         self.stage = ConnectionStage::Connecting;
@@ -241,7 +258,7 @@ impl GatewayCore {
             self.seq = Some(s);
         }
 
-        let mut actions = Vec::new();
+        let mut actions = vec![Action::Received { op: payload.op, s: payload.s, t: payload.t.clone() }];
         match Opcode::from(payload.op) {
             Opcode::Hello => {
                 self.on_hello(payload.d.as_ref(), now, rand);
@@ -304,6 +321,7 @@ impl GatewayCore {
             "READY" => {
                 self.stage = ConnectionStage::Connected;
                 self.live = true;
+                actions.push(Action::Live);
                 if let Some(d) = &d {
                     if let Some(sid) = d["session_id"].as_str() {
                         // A session id lets its holder resume this gateway, so
@@ -331,6 +349,7 @@ impl GatewayCore {
             "RESUMED" => {
                 self.stage = ConnectionStage::Connected;
                 self.live = true;
+                actions.push(Action::Live);
                 info!("Session successfully resumed");
             }
             _ => {}
@@ -446,12 +465,45 @@ mod tests {
         let mut core = GatewayCore::new(URL.to_string(), "tok".to_string());
         core.connecting();
         core.opened(t0);
-        assert_eq!(core.frame(&hello(interval_ms), t0, 1.0), vec![Action::Identify]);
+        assert_eq!(frame(&mut core, &hello(interval_ms), t0, 1.0), vec![Action::Identify]);
         (core, t0)
+    }
+
+    /// The core's actions for one frame, minus the bookkeeping ones
+    /// (`Received`, `Live`) that only feed the event stream.
+    fn frame(core: &mut GatewayCore, text: &str, now: Instant, rand: f64) -> Vec<Action> {
+        core.frame(text, now, rand).into_iter().filter(|a| !matches!(a, Action::Received { .. } | Action::Live)).collect()
     }
 
     fn sends_op(action: &Action, op: u64) -> bool {
         matches!(action, Action::Send(text) if serde_json::from_str::<Value>(text).unwrap()["op"] == op)
+    }
+
+    #[test]
+    fn every_frame_is_reported_first_and_live_follows_ready() {
+        let t0 = Instant::now();
+        let mut core = GatewayCore::new(URL.to_string(), "tok".to_string());
+        core.opened(t0);
+        let actions = core.frame(&hello(45_000), t0, 1.0);
+        assert_eq!(actions, vec![Action::Received { op: 10, s: None, t: None }, Action::Identify]);
+        let actions = core.frame(&ready("sess"), t0, 0.5);
+        assert_eq!(actions[0], Action::Received { op: 0, s: Some(1), t: Some("READY".to_string()) });
+        assert_eq!(actions[1], Action::Live);
+        let actions = core.frame(&dispatch("RESUMED", 2, json!({})), t0, 0.5);
+        assert_eq!(actions[1], Action::Live);
+    }
+
+    #[test]
+    fn a_new_token_drops_the_session() {
+        let (mut core, t0) = after_hello(45_000);
+        frame(&mut core, &ready("sess"), t0, 0.5);
+        core.connection_lost(false);
+        core.set_token("tok".to_string());
+        assert!(core.has_session(), "the same token keeps the session");
+        core.set_token("other".to_string());
+        assert!(!core.has_session());
+        assert_eq!(core.connect_url(), URL);
+        assert_eq!(core.token(), "other");
     }
 
     #[test]
@@ -463,7 +515,7 @@ mod tests {
     #[test]
     fn ready_records_session_and_fires_cache_ready_for_no_guilds() {
         let (mut core, t0) = after_hello(45_000);
-        let actions = core.frame(&ready("sess"), t0, 0.5);
+        let actions = frame(&mut core, &ready("sess"), t0, 0.5);
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0], cache_ready());
         assert!(matches!(&actions[1], Action::Dispatch { event_type, .. } if event_type == "READY"));
@@ -475,10 +527,10 @@ mod tests {
     #[test]
     fn cache_ready_waits_for_every_guild() {
         let (mut core, t0) = after_hello(45_000);
-        core.frame(&dispatch("READY", 1, json!({ "session_id": "s", "guilds": [{ "id": "1" }, { "id": "2" }] })), t0, 0.5);
-        let first = core.frame(&dispatch("GUILD_CREATE", 2, json!({ "id": "1" })), t0, 0.5);
+        frame(&mut core, &dispatch("READY", 1, json!({ "session_id": "s", "guilds": [{ "id": "1" }, { "id": "2" }] })), t0, 0.5);
+        let first = frame(&mut core, &dispatch("GUILD_CREATE", 2, json!({ "id": "1" })), t0, 0.5);
         assert_eq!(first.len(), 1);
-        let second = core.frame(&dispatch("GUILD_CREATE", 3, json!({ "id": "2" })), t0, 0.5);
+        let second = frame(&mut core, &dispatch("GUILD_CREATE", 3, json!({ "id": "2" })), t0, 0.5);
         assert_eq!(second[0], cache_ready());
         assert_eq!(second.len(), 2);
     }
@@ -486,11 +538,11 @@ mod tests {
     #[test]
     fn hello_resumes_when_a_session_is_held() {
         let (mut core, t0) = after_hello(45_000);
-        core.frame(&ready("sess"), t0, 0.5);
+        frame(&mut core, &ready("sess"), t0, 0.5);
         core.connection_lost(false);
         let t1 = t0 + ms(10_000);
         core.opened(t1);
-        let actions = core.frame(&hello(45_000), t1, 1.0);
+        let actions = frame(&mut core, &hello(45_000), t1, 1.0);
         assert_eq!(actions.len(), 1);
         let Action::Send(text) = &actions[0] else { panic!("expected RESUME, got {actions:?}") };
         let v: Value = serde_json::from_str(text).unwrap();
@@ -506,18 +558,18 @@ mod tests {
         let t0 = Instant::now();
         let mut core = GatewayCore::new(URL.to_string(), "Bot tok".to_string());
         core.opened(t0);
-        core.frame(&hello(45_000), t0, 1.0);
-        core.frame(&ready("sess"), t0, 0.5);
+        frame(&mut core, &hello(45_000), t0, 1.0);
+        frame(&mut core, &ready("sess"), t0, 0.5);
         core.connection_lost(false);
         core.opened(t0);
-        let Action::Send(text) = &core.frame(&hello(45_000), t0, 1.0)[0] else { panic!("expected RESUME") };
+        let Action::Send(text) = &frame(&mut core, &hello(45_000), t0, 1.0)[0] else { panic!("expected RESUME") };
         assert_eq!(serde_json::from_str::<Value>(text).unwrap()["d"]["token"], "tok");
     }
 
     #[test]
     fn connection_lost_with_clear_session_forces_identify() {
         let (mut core, t0) = after_hello(45_000);
-        core.frame(&ready("sess"), t0, 0.5);
+        frame(&mut core, &ready("sess"), t0, 0.5);
         core.connection_lost(true);
         assert!(!core.has_session());
         assert_eq!(core.stage(), ConnectionStage::Disconnected);
@@ -527,7 +579,7 @@ mod tests {
     #[test]
     fn heartbeat_carries_the_latest_sequence() {
         let (mut core, t0) = after_hello(1_000);
-        core.frame(&dispatch("MESSAGE_CREATE", 42, json!({})), t0, 0.5);
+        frame(&mut core, &dispatch("MESSAGE_CREATE", 42, json!({})), t0, 0.5);
         assert!(core.tick(t0 + ms(999), 0.5).is_empty());
         assert_eq!(core.tick(t0 + ms(1_000), 0.5), vec![Action::Send(json!({ "op": 1, "d": 42 }).to_string())]);
     }
@@ -536,7 +588,7 @@ mod tests {
     fn heartbeat_ack_measures_latency() {
         let (mut core, t0) = after_hello(1_000);
         core.tick(t0 + ms(1_000), 0.5);
-        core.frame(&ack(), t0 + ms(1_040), 0.5);
+        frame(&mut core, &ack(), t0 + ms(1_040), 0.5);
         assert_eq!(core.latency(), Some(ms(40)));
     }
 
@@ -547,14 +599,14 @@ mod tests {
             let at = t0 + ms(1_000 * beat);
             let actions = core.tick(at, 0.5);
             assert!(sends_op(&actions[0], 1), "beat {beat}: {actions:?}");
-            core.frame(&ack(), at + ms(30), 0.5);
+            frame(&mut core, &ack(), at + ms(30), 0.5);
         }
     }
 
     #[test]
     fn op_7_reconnects_with_a_resume_cause() {
         let (mut core, t0) = after_hello(45_000);
-        let actions = core.frame(&json!({ "op": 7 }).to_string(), t0, 0.5);
+        let actions = frame(&mut core, &json!({ "op": 7 }).to_string(), t0, 0.5);
         assert_eq!(actions, vec![Action::Reconnect { cause: ReconnectCause::Resume, reason: "op 7 reconnect" }]);
     }
 
@@ -572,7 +624,7 @@ mod tests {
     #[test]
     fn undecodable_frame_is_ignored() {
         let (mut core, t0) = after_hello(45_000);
-        assert!(core.frame("not json", t0, 0.5).is_empty());
+        assert!(frame(&mut core, "not json", t0, 0.5).is_empty());
     }
 
     #[test]
@@ -589,7 +641,7 @@ mod tests {
     fn resume_targets_resume_gateway_url_with_the_base_query() {
         let (mut core, t0) = after_hello(45_000);
         assert_eq!(core.connect_url(), URL);
-        core.frame(&ready("sess"), t0, 0.5);
+        frame(&mut core, &ready("sess"), t0, 0.5);
         core.connection_lost(false);
         assert_eq!(core.connect_url(), "wss://resume.example/?encoding=json&v=9");
     }
@@ -607,7 +659,7 @@ mod tests {
         let (mut core, t0) = after_hello(1_000);
         assert!(sends_op(&core.tick(t0 + ms(1_000), 0.5)[0], 1));
         // A dispatch keeps the read timeout away, but no ACK comes.
-        core.frame(&dispatch("TYPING_START", 2, json!({})), t0 + ms(1_500), 0.5);
+        frame(&mut core, &dispatch("TYPING_START", 2, json!({})), t0 + ms(1_500), 0.5);
         assert!(core.tick(t0 + ms(1_999), 0.5).is_empty());
         assert_eq!(core.tick(t0 + ms(2_000), 0.5), vec![Action::Reconnect { cause: ReconnectCause::Failure, reason: "heartbeat not acknowledged" }]);
     }
@@ -617,8 +669,8 @@ mod tests {
     #[test]
     fn resumable_op_9_reconnects_and_keeps_the_session() {
         let (mut core, t0) = after_hello(45_000);
-        core.frame(&ready("sess"), t0, 0.5);
-        let actions = core.frame(&json!({ "op": 9, "d": true }).to_string(), t0, 0.5);
+        frame(&mut core, &ready("sess"), t0, 0.5);
+        let actions = frame(&mut core, &json!({ "op": 9, "d": true }).to_string(), t0, 0.5);
         assert_eq!(actions, vec![Action::Reconnect { cause: ReconnectCause::Resume, reason: "op 9 resumable" }]);
         assert!(core.has_session());
     }
@@ -626,8 +678,8 @@ mod tests {
     #[test]
     fn non_resumable_op_9_drops_the_session() {
         let (mut core, t0) = after_hello(45_000);
-        core.frame(&ready("sess"), t0, 0.5);
-        let actions = core.frame(&json!({ "op": 9, "d": false }).to_string(), t0, 0.5);
+        frame(&mut core, &ready("sess"), t0, 0.5);
+        let actions = frame(&mut core, &json!({ "op": 9, "d": false }).to_string(), t0, 0.5);
         assert_eq!(actions, vec![Action::Reconnect { cause: ReconnectCause::Identify, reason: "op 9 not resumable" }]);
         assert!(!core.has_session());
         assert_eq!(core.connect_url(), URL);
@@ -636,7 +688,7 @@ mod tests {
     #[test]
     fn resumable_op_9_without_a_session_identifies() {
         let (mut core, t0) = after_hello(45_000);
-        let actions = core.frame(&json!({ "op": 9, "d": true }).to_string(), t0, 0.5);
+        let actions = frame(&mut core, &json!({ "op": 9, "d": true }).to_string(), t0, 0.5);
         assert_eq!(actions, vec![Action::Reconnect { cause: ReconnectCause::Identify, reason: "op 9 not resumable" }]);
     }
 
@@ -668,8 +720,8 @@ mod tests {
     /// session-ending code before any heartbeat is acknowledged.
     fn ready_then_close(core: &mut GatewayCore, at: Instant) -> Duration {
         core.opened(at);
-        core.frame(&hello(45_000), at, 1.0);
-        core.frame(&ready("sess"), at, 0.5);
+        frame(core, &hello(45_000), at, 1.0);
+        frame(core, &ready("sess"), at, 0.5);
         core.connection_lost(true);
         core.reconnect_delay(ReconnectCause::Identify, 0.0, plan_reconnect)
     }
@@ -690,19 +742,19 @@ mod tests {
             ready_then_close(&mut core, t0);
         }
         core.opened(t0);
-        core.frame(&hello(1_000), t0, 1.0);
+        frame(&mut core, &hello(1_000), t0, 1.0);
         // An ACK before READY does not count.
         core.tick(t0 + ms(1_000), 0.5);
-        core.frame(&ack(), t0 + ms(1_010), 0.5);
-        core.frame(&ready("sess"), t0 + ms(1_020), 0.5);
+        frame(&mut core, &ack(), t0 + ms(1_010), 0.5);
+        frame(&mut core, &ready("sess"), t0 + ms(1_020), 0.5);
         core.connection_lost(false);
         assert_eq!(core.reconnect_delay(ReconnectCause::Failure, 0.5, plan_reconnect), Duration::from_secs(16));
 
         core.opened(t0);
-        core.frame(&hello(1_000), t0, 1.0);
-        core.frame(&dispatch("RESUMED", 2, json!({})), t0, 0.5);
+        frame(&mut core, &hello(1_000), t0, 1.0);
+        frame(&mut core, &dispatch("RESUMED", 2, json!({})), t0, 0.5);
         core.tick(t0 + ms(1_000), 0.5);
-        core.frame(&ack(), t0 + ms(1_010), 0.5);
+        frame(&mut core, &ack(), t0 + ms(1_010), 0.5);
         core.connection_lost(false);
         assert_eq!(core.reconnect_delay(ReconnectCause::Resume, 0.5, plan_reconnect), FAST_RECONNECT);
     }

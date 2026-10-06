@@ -18,14 +18,20 @@ use tokio::{
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage, MaybeTlsStream, WebSocketStream};
 use tracing::{error, info, warn};
 
-use self::machine::{gateway_token, plan_reconnect, Action, GatewayCore, ReconnectCause};
+pub use self::hooks::{default_close_verdict, CloseVerdict, DefaultHooks, GatewayHooks, IdentifyDefaults};
+pub use self::machine::{plan_reconnect, ReconnectCause, BACKOFF_MAX, BACKOFF_MIN, FAST_RECONNECT, INVALID_SESSION_MAX, INVALID_SESSION_MIN};
+use self::machine::{Action, GatewayCore};
+use self::stream::EventSink;
+pub use self::stream::{FrameBuffer, GatewayEvent, GatewayEvents, GatewayStatus};
 use crate::{
     error::Result,
     events::DispatchEvent,
     types::{ConnectionStage, ReconnectType, UserStatus},
 };
 
+mod hooks;
 mod machine;
+mod stream;
 
 /// Hardcoded gateway endpoint (mimics Chrome browser session)
 const GATEWAY_URL: &str = "wss://gateway-us-east1-c.discord.gg/?encoding=json&v=9";
@@ -151,46 +157,12 @@ pub struct GatewayPayload {
 enum GatewayLoopOutcome {
     /// Caller requested shutdown — exit the supervisor.
     Shutdown,
-    /// Discord returned a fatal close code; reconnecting will not help.
-    Fatal { code: u16, reason: &'static str },
+    /// The peer sent a close frame; the close policy decides what follows.
+    Closed { code: Option<u16>, reason: String },
     /// The connection ended; reconnect. A [`ReconnectCause::Identify`] cause
     /// means Discord told us our session is gone, so the next connection
     /// performs a full IDENTIFY rather than RESUME.
     Reconnect(ReconnectCause),
-}
-
-/// Classify a Discord WebSocket close code into a supervisor outcome.
-///
-/// Codes in the 4000–4999 range are Discord-specific; codes < 4000 are
-/// standard WebSocket codes (1000 normal, 1001 going away, 1006 abnormal).
-/// See <https://discord.com/developers/docs/topics/opcodes-and-status-codes#gateway-gateway-close-event-codes>.
-fn classify_close(code: Option<u16>) -> GatewayLoopOutcome {
-    match code {
-        // 4000 Unknown error — generic recoverable failure, attempt RESUME.
-        Some(4000) => GatewayLoopOutcome::Reconnect(ReconnectCause::Resume),
-        // 4001 Unknown opcode — we sent a bad opcode; safe to RESUME after fix.
-        Some(4001) => GatewayLoopOutcome::Reconnect(ReconnectCause::Resume),
-        // 4002 Decode error — Discord couldn't parse our payload; RESUME.
-        Some(4002) => GatewayLoopOutcome::Reconnect(ReconnectCause::Resume),
-        // 4003 Not authenticated — sent a non-IDENTIFY before IDENTIFY; the
-        // session is gone, force a fresh IDENTIFY rather than RESUME.
-        Some(4003) => GatewayLoopOutcome::Reconnect(ReconnectCause::Identify),
-        Some(4004) => GatewayLoopOutcome::Fatal { code: 4004, reason: "Authentication failed" },
-        // 4005 Already authenticated — odd state but the session is still valid.
-        Some(4005) => GatewayLoopOutcome::Reconnect(ReconnectCause::Resume),
-        // 4008 Rate limited — the session survives, but the reconnect waits the
-        // backoff ladder rather than the fast RESUME floor.
-        Some(4008) => GatewayLoopOutcome::Reconnect(ReconnectCause::Failure),
-        // 4007 Invalid seq, 4009 Session timed out — the session is
-        // unrecoverable, force re-IDENTIFY.
-        Some(4007 | 4009) => GatewayLoopOutcome::Reconnect(ReconnectCause::Identify),
-        Some(4010) => GatewayLoopOutcome::Fatal { code: 4010, reason: "Invalid shard" },
-        Some(4011) => GatewayLoopOutcome::Fatal { code: 4011, reason: "Sharding required" },
-        Some(4012) => GatewayLoopOutcome::Fatal { code: 4012, reason: "Invalid API version" },
-        Some(4013) => GatewayLoopOutcome::Fatal { code: 4013, reason: "Invalid intents" },
-        Some(4014) => GatewayLoopOutcome::Fatal { code: 4014, reason: "Disallowed intents" },
-        Some(_) | None => GatewayLoopOutcome::Reconnect(ReconnectCause::Resume),
-    }
 }
 
 /// Snapshot of the supervisor's state, read by the public getters.
@@ -201,93 +173,20 @@ struct Shared {
     has_session: bool,
 }
 
-/// Everything IDENTIFY needs besides the token.
-#[derive(Debug, Clone)]
-struct IdentifyDefaults {
-    custom_status: UserStatus,
-    capabilities: u32,
-    intents: Option<u64>,
-    large_threshold: u16,
-    shard: Option<[u32; 2]>,
-    client_build_number: Option<u32>,
+/// Where the supervisor finds the [`Gateway::frames`] sink, if one was asked
+/// for.
+#[derive(Debug, Default)]
+struct EventSlot {
+    sink: Option<EventSink>,
+    /// `frames()` already handed out its receiver.
+    taken: bool,
 }
 
-impl IdentifyDefaults {
-    /// The IDENTIFY `d` object for `token`. Fetches the client build number
-    /// from discord.com once per process unless one was pinned.
-    async fn payload(&self, token: &str) -> Value {
-        let build_number = match self.client_build_number {
-            Some(n) => n,
-            None => client_build_number().await,
-        };
-        identify_payload(token, self.custom_status, self.capabilities, self.intents, self.large_threshold, self.shard, build_number)
+/// Run `f` on the event sink, if [`Gateway::frames`] installed one.
+fn with_sink(slot: &Mutex<EventSlot>, f: impl FnOnce(&mut EventSink)) {
+    if let Some(sink) = slot.lock().unwrap_or_else(|e| e.into_inner()).sink.as_mut() {
+        f(sink);
     }
-}
-
-/// Build the IDENTIFY `d` object.
-///
-/// `intents` is honoured for bot-token connections — when `Some` we add an
-/// `intents` field to the payload alongside the existing `capabilities`
-/// field used for user tokens. `large_threshold` is forwarded as required
-/// by the Discord docs (valid range 50–250; clamped here as belt-and-braces).
-// TODO: route `large_threshold` through `DiscordUserBuilder` so callers can
-// tune it without touching `Gateway` directly.
-fn identify_payload(token: &str, status: UserStatus, capabilities: u32, intents: Option<u64>, large_threshold: u16, shard: Option<[u32; 2]>, build_number: u32) -> Value {
-    let large_threshold = large_threshold.clamp(50, 250);
-    let mut data = json!({
-        "token": gateway_token(token),
-        "capabilities": capabilities,
-        "large_threshold": large_threshold,
-        "properties": {
-            "os": "Windows",
-            "browser": "Chrome",
-            "device": "",
-            "system_locale": "en-US",
-            "browser_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "browser_version": "120.0.0.0",
-            "os_version": "10",
-            "referrer": "",
-            "referring_domain": "",
-            "referrer_current": "",
-            "referring_domain_current": "",
-            "release_channel": "stable",
-            "client_build_number": build_number,
-            "client_event_source": null
-        },
-        "presence": {
-            "status": status.as_str(),
-            "since": 0,
-            "activities": [],
-            "afk": false
-        },
-        "compress": false,
-        "client_state": {
-            "guild_versions": {},
-            "highest_last_message_id": "0",
-            "read_state_version": 0,
-            "user_guild_settings_version": -1,
-            "private_channels_version": "0",
-            "api_code_version": 0
-        }
-    });
-
-    // Bot-token mode: include `intents` alongside `capabilities`. User-token
-    // mode (intents == None) keeps the existing payload shape unchanged.
-    if let Some(intents) = intents {
-        if let Some(obj) = data.as_object_mut() {
-            obj.insert("intents".to_string(), Value::from(intents));
-        }
-    }
-
-    // Sharding: Discord requires sharding once a bot reaches 2 500 guilds and
-    // emits close code 4011 ("sharding required") if absent. Shape: [id, count].
-    if let Some([shard_id, shard_count]) = shard {
-        if let Some(obj) = data.as_object_mut() {
-            obj.insert("shard".to_string(), json!([shard_id, shard_count]));
-        }
-    }
-
-    data
 }
 
 async fn send_text(writer: &Arc<RwLock<Option<WsWriter>>>, text: String) -> Result<()> {
@@ -323,9 +222,11 @@ pub struct Gateway {
     /// Client build number pinned for IDENTIFY. `None` fetches it from
     /// discord.com once per process.
     client_build_number: Option<u32>,
+    hooks: Arc<dyn GatewayHooks>,
     writer: Arc<RwLock<Option<WsWriter>>>,
     event_sender: broadcast::Sender<DispatchEvent>,
     shared: Arc<Mutex<Shared>>,
+    events: Arc<Mutex<EventSlot>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
 }
 
@@ -355,9 +256,11 @@ impl Gateway {
                 shard: None,
                 url: None,
                 client_build_number: None,
+                hooks: Arc::new(DefaultHooks),
                 writer: Arc::new(RwLock::new(None)),
                 event_sender,
                 shared: Arc::new(Mutex::new(Shared::default())),
+                events: Arc::new(Mutex::new(EventSlot::default())),
                 shutdown_tx: None,
             },
             event_receiver,
@@ -420,6 +323,42 @@ impl Gateway {
         self
     }
 
+    /// Install caller policy: credentials, the IDENTIFY body, the close
+    /// policy and reconnect pacing. See [`GatewayHooks`]; every method left
+    /// unimplemented keeps the library's behaviour.
+    pub fn with_hooks(mut self, hooks: Arc<dyn GatewayHooks>) -> Self {
+        self.hooks = hooks;
+        self
+    }
+
+    /// Open the ordered event stream: every inbound frame, as received, and
+    /// every status change.
+    ///
+    /// The receiver can be taken once; a later call returns `None`. Call it
+    /// before [`Self::connect`] to see the first frames. The stream ends with
+    /// [`GatewayStatus::Stopped`] when the supervisor exits, and does not
+    /// carry over to a later `connect()`.
+    ///
+    /// The supervisor never waits on this stream. With
+    /// [`FrameBuffer::Bounded`], events that do not fit are dropped and
+    /// reported as [`GatewayEvent::Lagged`]. The [`DispatchEvent`] broadcast
+    /// returned by [`Self::new`] is unaffected.
+    pub fn frames(&self, buffer: FrameBuffer) -> Option<GatewayEvents> {
+        let mut slot = self.events.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.taken {
+            return None;
+        }
+        let (sink, events) = EventSink::channel(buffer);
+        slot.sink = Some(sink);
+        slot.taken = true;
+        Some(events)
+    }
+
+    /// The library's IDENTIFY settings, as configured on this gateway.
+    pub fn identify_defaults(&self) -> IdentifyDefaults {
+        IdentifyDefaults { custom_status: self.custom_status, capabilities: self.capabilities, intents: self.intents, large_threshold: self.large_threshold, shard: self.shard, client_build_number: self.client_build_number }
+    }
+
     /// Return the gateway URL for the configured override or compression.
     fn gateway_url(&self) -> &str {
         if let Some(url) = &self.url {
@@ -446,10 +385,15 @@ impl Gateway {
     ///
     /// Returns once the WebSocket is open; IDENTIFY happens in the background
     /// after Discord's HELLO. The supervisor reconnects on its own and exits
-    /// only on [`Self::disconnect`] or a fatal close code (4004 auth failure,
-    /// 4014 disallowed intents, etc.).
+    /// only on [`Self::disconnect`] or when the close policy says stop (by
+    /// default 4004 auth failure, 4014 disallowed intents, etc.).
+    ///
+    /// Fails with [`DiscordError::GatewayConnection`](crate::DiscordError::GatewayConnection)
+    /// when [`GatewayHooks::token`] has no credential.
     pub async fn connect(&mut self) -> Result<()> {
-        let mut core = GatewayCore::new(self.gateway_url().to_string(), self.token.clone());
+        with_sink(&self.events, |sink| sink.status(GatewayStatus::Connecting, None));
+        let token = self.hooks.token(&self.token).await.ok_or_else(|| crate::error::DiscordError::GatewayConnection("no gateway credential available".to_string()))?;
+        let mut core = GatewayCore::new(self.gateway_url().to_string(), token);
         core.connecting();
         self.shared().stage = core.stage();
 
@@ -463,10 +407,13 @@ impl Gateway {
 
         let supervisor = Supervisor {
             core,
-            identify: IdentifyDefaults { custom_status: self.custom_status, capabilities: self.capabilities, intents: self.intents, large_threshold: self.large_threshold, shard: self.shard, client_build_number: self.client_build_number },
+            configured_token: self.token.clone(),
+            hooks: Arc::clone(&self.hooks),
+            identify: self.identify_defaults(),
             writer: Arc::clone(&self.writer),
             event_sender: self.event_sender.clone(),
             shared: Arc::clone(&self.shared),
+            events: Arc::clone(&self.events),
         };
         tokio::spawn(supervisor.run(reader, shutdown_rx));
 
@@ -702,18 +649,23 @@ impl Gateway {
 /// actions, and reconnects when a connection ends.
 struct Supervisor {
     core: GatewayCore,
+    /// The token the gateway was built with, handed to [`GatewayHooks::token`].
+    configured_token: String,
+    hooks: Arc<dyn GatewayHooks>,
     identify: IdentifyDefaults,
     writer: Arc<RwLock<Option<WsWriter>>>,
     event_sender: broadcast::Sender<DispatchEvent>,
     shared: Arc<Mutex<Shared>>,
+    events: Arc<Mutex<EventSlot>>,
 }
 
 impl Supervisor {
-    /// Run until shutdown or a fatal close.
+    /// Run until shutdown or until the close policy says stop.
     async fn run(mut self, initial_reader: WsReader, mut shutdown_rx: mpsc::Receiver<()>) {
         // The first iteration uses the reader from the initial connect();
         // subsequent iterations re-establish the WebSocket here.
         let mut current_reader: Option<WsReader> = Some(initial_reader);
+        let stop_detail: String;
 
         'supervisor: loop {
             // ── 1. Acquire a reader: initial, or a reconnect ──
@@ -723,10 +675,18 @@ impl Supervisor {
                     info!("Reconnecting to Discord gateway…");
                     self.core.connecting();
                     self.publish();
+                    self.status(GatewayStatus::Connecting, None);
                     // Drop any stale writer before opening a new socket.
                     *self.writer.write().await = None;
 
-                    match connect_async(self.core.connect_url()).await {
+                    let connected = match self.hooks.token(&self.configured_token).await {
+                        Some(token) => {
+                            self.core.set_token(token);
+                            connect_async(self.core.connect_url()).await.map_err(|e| e.to_string())
+                        }
+                        None => Err("no gateway credential available".to_string()),
+                    };
+                    match connected {
                         Ok((ws_stream, _)) => {
                             let (w, r) = ws_stream.split();
                             *self.writer.write().await = Some(w);
@@ -735,10 +695,13 @@ impl Supervisor {
                             r
                         }
                         Err(e) => {
-                            let wait = self.core.reconnect_delay(ReconnectCause::Failure, rand::random(), plan_reconnect);
+                            let wait = self.reconnect_delay(ReconnectCause::Failure);
                             error!(error = %e, ?wait, "Gateway reconnect failed; waiting before retry");
                             tokio::select! {
-                                _ = shutdown_rx.recv() => break 'supervisor,
+                                _ = shutdown_rx.recv() => {
+                                    stop_detail = "shutdown".to_string();
+                                    break 'supervisor;
+                                }
                                 _ = tokio::time::sleep(wait) => {}
                             }
                             continue 'supervisor;
@@ -754,35 +717,55 @@ impl Supervisor {
             let cause = match outcome {
                 GatewayLoopOutcome::Shutdown => {
                     self.core.connection_lost(false);
+                    stop_detail = "shutdown".to_string();
                     break 'supervisor;
                 }
-                GatewayLoopOutcome::Fatal { code, reason } => {
-                    error!(close_code = code, reason, "Gateway closed with fatal code; not reconnecting");
-                    self.core.connection_lost(false);
-                    // Nothing will write to this socket again, and
-                    // `is_connected()` reads the writer.
-                    *self.writer.write().await = None;
-                    break 'supervisor;
+                GatewayLoopOutcome::Closed { code, reason } => {
+                    if code == Some(4004) {
+                        self.hooks.invalidate();
+                        self.status(GatewayStatus::AuthFailed, Some(format!("close 4004: {reason}")));
+                    }
+                    match self.hooks.on_close(code, &reason) {
+                        CloseVerdict::Resume => ReconnectCause::Resume,
+                        CloseVerdict::Identify => ReconnectCause::Identify,
+                        CloseVerdict::Retry => ReconnectCause::Failure,
+                        CloseVerdict::Stop(why) => {
+                            error!(close_code = ?code, reason = %why, "Gateway closed; not reconnecting");
+                            self.core.connection_lost(false);
+                            stop_detail = why;
+                            break 'supervisor;
+                        }
+                    }
                 }
-                GatewayLoopOutcome::Reconnect(cause) => {
-                    self.core.connection_lost(cause == ReconnectCause::Identify);
-                    cause
-                }
+                GatewayLoopOutcome::Reconnect(cause) => cause,
             };
+            self.core.connection_lost(cause == ReconnectCause::Identify);
             self.publish();
 
             // Every cause advances the backoff ladder; only a connection that
             // has proven stable resets it (see `plan_reconnect`).
-            let wait = self.core.reconnect_delay(cause, rand::random(), plan_reconnect);
+            let wait = self.reconnect_delay(cause);
             info!(?cause, ?wait, "Gateway connection ended; reconnecting");
             tokio::select! {
-                _ = shutdown_rx.recv() => break 'supervisor,
+                _ = shutdown_rx.recv() => {
+                    stop_detail = "shutdown".to_string();
+                    break 'supervisor;
+                }
                 _ = tokio::time::sleep(wait) => {}
             }
             // current_reader stays None — the loop reconnects.
         }
 
+        // Nothing will write to this socket again, and `is_connected()` reads
+        // the writer, so clear it before reporting the stop.
+        if let Some(mut w) = self.writer.write().await.take() {
+            let _ = w.close().await;
+        }
         self.publish();
+        let sink = self.events.lock().unwrap_or_else(|e| e.into_inner()).sink.take();
+        if let Some(sink) = sink {
+            sink.finish(Some(stop_detail)).await;
+        }
         info!("Gateway supervisor task exiting");
     }
 
@@ -797,62 +780,79 @@ impl Supervisor {
                 }
             };
 
-            let actions = tokio::select! {
+            let ended = tokio::select! {
                 _ = shutdown_rx.recv() => {
                     info!("Gateway shutdown requested");
-                    return GatewayLoopOutcome::Shutdown;
+                    Some(GatewayLoopOutcome::Shutdown)
                 }
                 msg = reader.next() => match msg {
-                    Some(Ok(WsMessage::Text(text))) => self.core.frame(text.as_str(), Instant::now(), rand::random()),
+                    Some(Ok(WsMessage::Text(text))) => {
+                        let actions = self.core.frame(text.as_str(), Instant::now(), rand::random());
+                        self.run_actions(actions, Some(text.as_str())).await
+                    }
                     Some(Ok(WsMessage::Binary(bytes))) => {
                         // Discord may send zlib-compressed JSON payloads as binary frames.
                         match Gateway::decompress_zlib(&bytes) {
-                            Ok(text) => self.core.frame(&text, Instant::now(), rand::random()),
+                            Ok(text) => {
+                                let actions = self.core.frame(&text, Instant::now(), rand::random());
+                                self.run_actions(actions, Some(&text)).await
+                            }
                             Err(e) => {
                                 warn!("Failed to decompress binary gateway frame ({} bytes): {}", bytes.len(), e);
-                                continue;
+                                None
                             }
                         }
                     }
                     Some(Ok(WsMessage::Close(frame))) => {
-                        let close_code: Option<u16> = frame.as_ref().map(|f| u16::from(f.code));
                         match &frame {
                             Some(f) => info!("Gateway connection closed: code={} reason={}", f.code, f.reason),
                             None => info!("Gateway connection closed"),
                         }
-                        return classify_close(close_code);
+                        let code = frame.as_ref().map(|f| u16::from(f.code));
+                        let reason = frame.map(|f| f.reason.to_string()).unwrap_or_default();
+                        Some(GatewayLoopOutcome::Closed { code, reason })
                     }
                     Some(Err(e)) => {
                         error!(error = %e, "WebSocket error");
-                        return GatewayLoopOutcome::Reconnect(ReconnectCause::Failure);
+                        Some(GatewayLoopOutcome::Reconnect(ReconnectCause::Failure))
                     }
                     None => {
                         info!("WebSocket stream ended");
-                        return GatewayLoopOutcome::Reconnect(ReconnectCause::Failure);
+                        Some(GatewayLoopOutcome::Reconnect(ReconnectCause::Failure))
                     }
-                    _ => continue,
+                    _ => None,
                 },
-                _ = wake => self.core.tick(Instant::now(), rand::random()),
+                _ = wake => {
+                    let actions = self.core.tick(Instant::now(), rand::random());
+                    self.run_actions(actions, None).await
+                }
             };
 
-            if let Some(outcome) = self.run_actions(actions).await {
+            if let Some(outcome) = ended {
                 return outcome;
             }
         }
     }
 
-    /// Carry out the core's actions. Returns an outcome when one of them ends
-    /// the connection.
-    async fn run_actions(&mut self, actions: Vec<Action>) -> Option<GatewayLoopOutcome> {
+    /// Carry out the core's actions. `raw` is the frame that produced them,
+    /// if any. Returns an outcome when one of the actions ends the
+    /// connection.
+    async fn run_actions(&mut self, actions: Vec<Action>, raw: Option<&str>) -> Option<GatewayLoopOutcome> {
         for action in actions {
             match action {
+                Action::Received { op, s, t } => {
+                    if let Some(raw) = raw {
+                        with_sink(&self.events, |sink| sink.emit(GatewayEvent::Frame { op, s, t, raw: raw.to_string() }));
+                    }
+                }
+                Action::Live => self.status(GatewayStatus::Live, None),
                 Action::Send(text) => {
                     if let Err(e) = send_text(&self.writer, text).await {
                         error!(error = %e, "Failed to send gateway frame");
                     }
                 }
                 Action::Identify => {
-                    let d = self.identify.payload(self.core.token()).await;
+                    let d = self.hooks.identify(self.core.token(), &self.identify).await;
                     match send_text(&self.writer, json!({ "op": 2, "d": d }).to_string()).await {
                         Ok(()) => info!("Sent identify payload"),
                         Err(e) => error!(error = %e, "Failed to send identify payload"),
@@ -872,6 +872,16 @@ impl Supervisor {
         }
         self.publish();
         None
+    }
+
+    /// The wait before the next connect, from the caller's pacing hook.
+    fn reconnect_delay(&mut self, cause: ReconnectCause) -> Duration {
+        let hooks = &self.hooks;
+        self.core.reconnect_delay(cause, rand::random(), |cause, backoff, held, rand| hooks.delay(cause, backoff, held, rand))
+    }
+
+    fn status(&self, status: GatewayStatus, detail: Option<String>) {
+        with_sink(&self.events, |sink| sink.status(status, detail));
     }
 
     /// Copy the core's state into the snapshot the public getters read.
@@ -912,49 +922,5 @@ impl Drop for Gateway {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.try_send(());
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn outcome(code: u16) -> String {
-        format!("{:?}", classify_close(Some(code)))
-    }
-
-    #[test]
-    fn close_codes_classify() {
-        for code in [4000, 4001, 4002, 4005, 1000, 1001, 1006, 4999] {
-            assert_eq!(outcome(code), "Reconnect(Resume)", "code {code}");
-        }
-        assert_eq!(outcome(4008), "Reconnect(Failure)");
-        for code in [4003, 4007, 4009] {
-            assert_eq!(outcome(code), "Reconnect(Identify)", "code {code}");
-        }
-        for code in [4004, 4010, 4011, 4012, 4013, 4014] {
-            assert!(outcome(code).starts_with("Fatal"), "code {code}");
-        }
-        assert_eq!(format!("{:?}", classify_close(None)), "Reconnect(Resume)");
-    }
-
-    #[test]
-    fn identify_strips_the_token_prefix_and_keeps_the_default_fingerprint() {
-        let d = identify_payload("Bot abc", UserStatus::Online, DEFAULT_CAPABILITIES, None, 500, None, 7);
-        assert_eq!(d["token"], "abc");
-        assert_eq!(d["capabilities"], 16381);
-        assert_eq!(d["large_threshold"], 250);
-        assert_eq!(d["properties"]["os"], "Windows");
-        assert_eq!(d["properties"]["browser_version"], "120.0.0.0");
-        assert_eq!(d["properties"]["client_build_number"], 7);
-        assert!(d.get("intents").is_none());
-        assert!(d.get("shard").is_none());
-    }
-
-    #[test]
-    fn identify_adds_intents_and_shard_when_set() {
-        let d = identify_payload("abc", UserStatus::Online, 0, Some(513), 50, Some([1, 4]), 7);
-        assert_eq!(d["intents"], 513);
-        assert_eq!(d["shard"], json!([1, 4]));
     }
 }
