@@ -7,11 +7,13 @@ A Discord self-bot client library for Rust. Connects to Discord as a **user acco
 ## Features
 
 - WebSocket gateway connection with automatic reconnection
+- Embeddable gateway: caller hooks for credentials, IDENTIFY, close policy and reconnect pacing, plus an ordered stream of raw frames (`Gateway::with_hooks`, `Gateway::frames`)
 - Rate-limit-aware HTTP client
 - Typed event system with RAII subscription guards
 - Message, relationship, channel, guild, and status operations
 - Fluent message/embed builder API
 - Custom status persistence via Discord's protobuf settings API
+- Optional `discord` CLI client (feature `cli`) with a local SQLite message archive
 
 ## Usage
 
@@ -19,7 +21,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-discord-user-rs = "0.6"
+discord-user-rs = "0.7"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -151,6 +153,30 @@ All operation traits are automatically implemented for any type implementing `Di
 | `ChannelOps` | `discord_user::operations::ChannelOps` |
 | `GuildOps` | `discord_user::operations::GuildOps` |
 | `StatusOps` | `discord_user::operations::StatusOps` |
+
+## CLI (`discord` binary)
+
+The crate also ships a full-featured Discord **client CLI** behind the `cli` feature — send/edit/react, threads, roles, bans, invites, webhooks, presence, and a local SQLite archive that `search`/`stats`/`export`/`timeline` query offline.
+
+```bash
+cargo install discord-user-rs --features cli --bin discord
+# or, from a clone:
+cargo build --release --features cli --bin discord
+```
+
+```bash
+discord auth --save            # discover the local token, write ./.env
+discord status                 # verify it
+discord dc sync-all -n 500     # archive every guild + text channel
+discord search "deadline"      # query the archive, offline
+discord dc send <channel> "hello"
+```
+
+The token is resolved from `--token`, then `$DISCORD_TOKEN`, then `./.env` (current directory only — parent directories are deliberately not walked).
+
+The archive path is `--db`, then `$DISCORD_DB`, then `~/.discord/discord.db` (`%USERPROFILE%\.discord\discord.db` on Windows); the directory is created on first use, a leading `~` is expanded in either override, and a directory or archive the CLI creates itself is made owner-only (`0700`/`0600`) since it holds message bodies. `DISCORD_DB` is read from the environment only — unlike `DISCORD_TOKEN`, it is not picked up from `.env`. Versions up to 0.6.1 defaulted to `./discord.db`, relative to the working directory — the CLI warns when it finds a stranded `./discord.db`, so move it to the new location or set `$DISCORD_DB` to keep using it.
+
+`SKILL.md` documents every subcommand.
 
 ## Notes
 

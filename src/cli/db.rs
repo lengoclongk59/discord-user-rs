@@ -14,6 +14,21 @@ pub struct Db {
 
 impl Db {
     pub fn open(path: &Path) -> Result<Self> {
+        // The default archive lives at `~/.discord/discord.db`, so the parent
+        // directory usually does not exist on a first run.
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            // Only tighten a directory we create ourselves — `--db
+            // ~/Documents/a.db` must not silently chmod ~/Documents to 0700.
+            let preexisting = dir.is_dir();
+            std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+            if !preexisting {
+                restrict_to_owner(dir, 0o700);
+            }
+        }
+        // Pre-create the file 0600 rather than letting SQLite create it 0644:
+        // the archive holds DM and guild message bodies, and SQLite copies the
+        // main file's mode onto the `-wal`/`-shm` siblings it derives from it.
+        precreate_private(path)?;
         let conn = Connection::open(path).with_context(|| format!("opening {}", path.display()))?;
         Self::init_schema(&conn)?;
         Ok(Db { conn })
@@ -720,6 +735,42 @@ impl Db {
     }
 }
 
+/// Create `path` as an empty, owner-only file when it does not exist yet.
+///
+/// A zero-length file is a valid empty SQLite database, so this only decides
+/// the mode the file is born with. Existing archives are left alone — their
+/// permissions may have been widened deliberately.
+fn precreate_private(path: &Path) -> Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    match opts.open(path) {
+        Ok(_) => Ok(()),
+        // Lost a race with a concurrent open — that process created it, which
+        // is just as good.
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(e).with_context(|| format!("creating {}", path.display())),
+    }
+}
+
+/// Best-effort tightening of a directory we just created. No-op on Windows,
+/// where ACLs inherit from the parent instead.
+#[allow(unused_variables)]
+fn restrict_to_owner(dir: &Path, mode: u32) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode));
+    }
+}
+
 fn row_to_msg(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
     let ts_str: String = r.get(5)?;
     // A bad timestamp on a stored row is a real corruption signal; surface
@@ -846,5 +897,67 @@ mod tests {
         db.insert_batch(&sample_messages()).unwrap();
         let err = db.resolve_channel_name("does-not-exist").unwrap_err();
         assert!(err.to_string().contains("No channel matches"));
+    }
+
+    #[test]
+    fn open_creates_missing_parent_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("a").join("b").join("archive.db");
+        let mut db = Db::open(&path).unwrap();
+        assert!(path.is_file(), "archive was not created at {:?}", path);
+        // The schema really ran, so the file is a usable database.
+        assert_eq!(db.insert_batch(&sample_messages()).unwrap(), 3);
+        assert_eq!(db.count_channel("c1").unwrap(), 2);
+    }
+
+    #[test]
+    fn open_is_idempotent_on_an_existing_archive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("nested").join("archive.db");
+        Db::open(&path)
+            .unwrap()
+            .insert_batch(&sample_messages())
+            .unwrap();
+        // Re-opening must not truncate or re-create what is already there.
+        let db = Db::open(&path).unwrap();
+        assert_eq!(db.count_channel("c1").unwrap(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_creates_owner_only_archive_and_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("private");
+        let path = dir.join("archive.db");
+        let _db = Db::open(&path).unwrap();
+
+        let file_mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            file_mode, 0o600,
+            "archive should not be group/world readable"
+        );
+        let dir_mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700, "archive directory should be owner-only");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_leaves_an_existing_directory_permissions_alone() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("shared");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let _db = Db::open(&dir.join("archive.db")).unwrap();
+
+        let dir_mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            dir_mode, 0o755,
+            "a pre-existing directory must not be chmod'd"
+        );
     }
 }

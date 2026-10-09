@@ -24,7 +24,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub token: Option<String>,
 
-    /// Override SQLite database path
+    /// Override SQLite database path (default `$DISCORD_DB`, else `~/.discord/discord.db`)
     #[arg(long, global = true)]
     pub db: Option<PathBuf>,
 

@@ -1,6 +1,6 @@
 [package]
 name = "discord-user-rs"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2021"
 description = "Discord self-bot client library — user-token WebSocket gateway and REST API, with an optional full-featured CLI client (archive + send/edit/react/threads/roles/bans/…)"
 license = "MIT"
@@ -118,6 +118,12 @@ windows = { version = "0.58", features = [
     "Win32_Security_Cryptography",
     "Win32_System_Memory",
 ], optional = true }
+
+# `tokio_unstable` is set by this repository's `.cargo/config.toml` (for
+# tokio-console) and gates the named-task path in `events.rs`; declaring it
+# keeps the gate from tripping `unexpected_cfgs`.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

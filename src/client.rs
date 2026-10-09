@@ -17,9 +17,70 @@ use crate::error::{DiscordError, Result};
 /// surfaces (profile, pinned-messages v2, etc.); v10 is the current stable
 /// release. `cli/auth/windows.rs::validate_token` uses raw reqwest with the
 /// same `/api/v10` path — keep them in sync if bumping.
-const API_BASE: &str = "https://discord.com/api/v10";
+pub const API_BASE: &str = "https://discord.com/api/v10";
 const DEFAULT_RETRY_COUNT: u32 = 5;
 const MAX_RETRY_AFTER_SECONDS: u64 = 30;
+
+/// When the client may send a request again after an attempt failed.
+///
+/// A request that Discord already carried out is carried out again when it is
+/// re-sent: a message is posted twice, a slash command fires twice. After a 429
+/// Discord has carried out nothing, so waiting and sending again is safe. After
+/// a 5xx or a transport failure (a timeout, a reset connection) nobody knows
+/// whether it did, and re-sending a POST there is how one message becomes two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResendPolicy {
+    /// The default. A 429 is waited out and the request sent again, whatever
+    /// its method. After a 5xx or a transport failure only an idempotent method
+    /// (GET, HEAD, OPTIONS, PUT, DELETE) is sent again; a POST or a PATCH
+    /// returns the error.
+    #[default]
+    IdempotentOnly,
+    /// Nothing is ever sent twice. A 429 returns [`DiscordError::RateLimited`]
+    /// (the bucket is still recorded, so the next request to it waits for the
+    /// reset); a 5xx or a transport failure returns its error. For an embedder
+    /// that owns its retry decisions.
+    Never,
+}
+
+impl ResendPolicy {
+    /// Whether a request answered 429 is waited out and sent again.
+    pub fn resends_after_rate_limit(self) -> bool {
+        matches!(self, Self::IdempotentOnly)
+    }
+
+    /// Whether a request whose outcome is unknown (a 5xx, a transport
+    /// failure) is sent again.
+    pub fn resends_after_unknown_outcome(self, method: &Method) -> bool {
+        matches!(self, Self::IdempotentOnly) && is_idempotent(method)
+    }
+}
+
+/// HTTP's idempotent methods: sending one twice has the effect of sending it
+/// once.
+fn is_idempotent(method: &Method) -> bool {
+    matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS | Method::PUT | Method::DELETE)
+}
+
+/// Read a response body as `T`. An empty body (a 204, or a 200 with nothing in
+/// it) reads as JSON `null`, so `()` and `Option<_>` accept it: Discord answers
+/// a pin, a reaction or a thread join with 204, and parsing the empty string
+/// failed every one of them after Discord had carried it out.
+fn parse_body<T: DeserializeOwned>(text: &str) -> Result<T> {
+    let json = if text.trim().is_empty() { "null" } else { text };
+    serde_json::from_str(json).map_err(|e| {
+        error!(error = %e, body_len = text.len(), "Failed to parse response");
+        DiscordError::Json(e)
+    })
+}
+
+/// The credential a request is sent with. Shared by every clone of a client
+/// and replaced whole, so one request never mixes an old token with new
+/// headers.
+struct Credentials {
+    token: String,
+    headers: HashMap<String, String>,
+}
 
 /// Cloudflare's invalid-request window (Discord docs: 10,000 in 10 minutes).
 const INVALID_REQUEST_WINDOW: Duration = Duration::from_secs(10 * 60);
@@ -257,8 +318,13 @@ impl Ratelimit {
 #[derive(Clone)]
 pub struct DiscordHttpClient {
     client: Client,
-    token: String,
-    custom_headers: HashMap<String, String>,
+    /// The token and the extra headers, replaceable while the client is in
+    /// use ([`Self::set_token`], [`Self::replace_headers`]).
+    credentials: Arc<std::sync::RwLock<Arc<Credentials>>>,
+    /// Where relative routes are sent. [`API_BASE`] unless
+    /// [`Self::with_api_base`] says otherwise.
+    api_base: Arc<str>,
+    resend: ResendPolicy,
     ratelimit: Ratelimit,
     ratelimiter_disabled: bool,
     /// Optional base64-encoded super-properties string mirrored from the
@@ -289,8 +355,9 @@ impl DiscordHttpClient {
 
         Self {
             client,
-            token: token.into(),
-            custom_headers: HashMap::new(),
+            credentials: Arc::new(std::sync::RwLock::new(Arc::new(Credentials { token: token.into(), headers: HashMap::new() }))),
+            api_base: Arc::from(API_BASE),
+            resend: ResendPolicy::default(),
             ratelimit: Ratelimit::default(),
             ratelimiter_disabled,
             super_properties_b64: None,
@@ -316,8 +383,9 @@ impl DiscordHttpClient {
 
         Some(Self {
             client,
-            token,
-            custom_headers: headers,
+            credentials: Arc::new(std::sync::RwLock::new(Arc::new(Credentials { token, headers }))),
+            api_base: Arc::from(API_BASE),
+            resend: ResendPolicy::default(),
             ratelimit: Ratelimit::default(),
             ratelimiter_disabled,
             super_properties_b64: None,
@@ -358,9 +426,85 @@ impl DiscordHttpClient {
         self.invalid_requests.count().await
     }
 
-    /// Get the token
-    pub fn token(&self) -> &str {
-        &self.token
+    /// The token requests are sent with now.
+    pub fn token(&self) -> String {
+        self.credentials().token.clone()
+    }
+
+    /// The credential as it stands. A request takes one snapshot per attempt.
+    fn credentials(&self) -> Arc<Credentials> {
+        Arc::clone(&self.credentials.read().unwrap_or_else(|poisoned| poisoned.into_inner()))
+    }
+
+    fn store_credentials(&self, next: Credentials) {
+        *self.credentials.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Arc::new(next);
+    }
+
+    /// Replace the token for every later request, on this client and every
+    /// clone of it. The extra headers are kept. The rate-limit buckets are
+    /// kept too, which is the point of replacing the token rather than
+    /// building a new client.
+    pub fn set_token(&self, token: impl Into<String>) {
+        let headers = self.credentials().headers.clone();
+        self.store_credentials(Credentials { token: token.into(), headers });
+    }
+
+    /// Replace the extra headers and the token together, as
+    /// [`Self::with_headers`] reads them: the `authorization` entry (any
+    /// case) is the token. Returns `false` and changes nothing when there is
+    /// no `authorization` entry.
+    pub fn replace_headers(&self, headers: HashMap<String, String>) -> bool {
+        let Some(token) = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("authorization")).map(|(_, v)| v.clone()) else {
+            return false;
+        };
+        self.store_credentials(Credentials { token, headers });
+        true
+    }
+
+    /// Send relative routes to `base` instead of [`API_BASE`]: a stand-in
+    /// server in a test, or a recording proxy. A route that is already an
+    /// absolute URL is sent where it says.
+    pub fn with_api_base(mut self, base: impl Into<String>) -> Self {
+        self.api_base = Arc::from(base.into().trim_end_matches('/'));
+        self
+    }
+
+    /// Where relative routes are sent.
+    pub fn api_base(&self) -> &str {
+        &self.api_base
+    }
+
+    /// Choose when a failed request may be sent again. See [`ResendPolicy`].
+    pub fn with_resend_policy(mut self, policy: ResendPolicy) -> Self {
+        self.resend = policy;
+        self
+    }
+
+    /// The policy in force. See [`ResendPolicy`].
+    pub fn resend_policy(&self) -> ResendPolicy {
+        self.resend
+    }
+
+    fn url_for(&self, endpoint: &str) -> String {
+        if endpoint.starts_with("http") {
+            endpoint.to_string()
+        } else {
+            format!("{}/{}", self.api_base, endpoint.trim_start_matches('/'))
+        }
+    }
+
+    /// The extra headers, minus the token (sent by
+    /// [`Self::apply_common_headers`]). A multipart body names its own content
+    /// type with its boundary, so a configured `content-type` is left out there.
+    fn apply_custom_headers(request: reqwest::RequestBuilder, creds: &Credentials, multipart: bool) -> reqwest::RequestBuilder {
+        let mut request = request;
+        for (key, value) in &creds.headers {
+            if key.eq_ignore_ascii_case("authorization") || (multipart && key.eq_ignore_ascii_case("content-type")) {
+                continue;
+            }
+            request = request.header(key.as_str(), value.as_str());
+        }
+        request
     }
 
     /// Returns `true` when the configured token represents a Discord
@@ -375,8 +519,7 @@ impl DiscordHttpClient {
     /// Discord's bot/OAuth2 endpoints reject them with HTTP 403 code
     /// 40333 "internal network error".
     pub fn is_application_token(&self) -> bool {
-        let t = self.token.trim_start();
-        t.starts_with("Bot ") || t.starts_with("Bearer ")
+        is_application_token(&self.credentials().token)
     }
 
     /// Set a callback to execute when rate limited
@@ -451,7 +594,7 @@ impl DiscordHttpClient {
 
         let path_cow = route.path();
         let endpoint = path_cow.as_ref();
-        let url = if endpoint.starts_with("http") { endpoint.to_string() } else { format!("{}/{}", API_BASE, endpoint.trim_start_matches('/')) };
+        let url = self.url_for(endpoint);
         let route_key = Ratelimit::get_route_key(&Method::POST, endpoint);
 
         for attempt in 0..DEFAULT_RETRY_COUNT {
@@ -467,13 +610,10 @@ impl DiscordHttpClient {
                 form = form.part(format!("files[{}]", i), part);
             }
 
+            let creds = self.credentials();
             let mut request = self.client.post(&url).multipart(form);
-            request = self.apply_common_headers(request, None);
-            for (key, value) in &self.custom_headers {
-                if key.to_lowercase() != "authorization" {
-                    request = request.header(key.as_str(), value.as_str());
-                }
-            }
+            request = Self::apply_common_headers(request, &creds, self.fingerprint(), None);
+            request = Self::apply_custom_headers(request, &creds, true);
 
             debug!("Multipart request attempt {}/{}: POST {}", attempt + 1, DEFAULT_RETRY_COUNT, url);
             match request.send().await {
@@ -484,10 +624,7 @@ impl DiscordHttpClient {
                     }
                     if status.is_success() {
                         let text = response.text().await?;
-                        return serde_json::from_str(&text).map_err(|e| {
-                            error!(error = %e, body = %text, "Failed to parse multipart response");
-                            DiscordError::Json(e)
-                        });
+                        return parse_body(&text);
                     }
                     if status.as_u16() == 429 {
                         // Cloudflare 1015 budget tracker.
@@ -496,6 +633,9 @@ impl DiscordHttpClient {
                         let info = Self::extract_rate_limit_info(response.headers());
                         if !self.ratelimiter_disabled {
                             self.ratelimit.record_429(&route_key, response.headers(), info.retry_after);
+                        }
+                        if !self.resend.resends_after_rate_limit() {
+                            return Err(DiscordError::RateLimited { retry_after: info.retry_after, bucket: info.bucket, global: info.global, scope: info.scope });
                         }
                         let wait_time = if info.retry_after < 2.0 { 2.0 } else { info.retry_after };
                         debug!("Rate limited on multipart, waiting {:.2}s", wait_time);
@@ -508,13 +648,9 @@ impl DiscordHttpClient {
                     let error_body = response.text().await.unwrap_or_default();
                     return Err(if status.is_server_error() { DiscordError::ServiceError { status: status.as_u16(), body: error_body } } else { DiscordError::UnexpectedStatusCode { status: status.as_u16(), body: error_body } });
                 }
-                Err(e) => {
-                    if attempt < DEFAULT_RETRY_COUNT - 1 {
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                        continue;
-                    }
-                    return Err(DiscordError::Http(e));
-                }
+                // A POST whose outcome is unknown: it may have been posted, so
+                // it is never sent again (`ResendPolicy`).
+                Err(e) => return Err(DiscordError::Http(e)),
             }
         }
         Err(DiscordError::MaxRetriesExceeded)
@@ -527,7 +663,7 @@ impl DiscordHttpClient {
     /// fields (not the `files[N]` + `payload_json` structure of message
     /// attachments).
     pub async fn post_raw_multipart<T: DeserializeOwned>(&self, path: String, form: reqwest::multipart::Form) -> Result<T> {
-        let url = if path.starts_with("http") { path.clone() } else { format!("{}/{}", API_BASE, path.trim_start_matches('/')) };
+        let url = self.url_for(&path);
         let route_key = Ratelimit::get_route_key(&Method::POST, &path);
 
         // Form is consumed on first use; rebuild is not possible, so we
@@ -537,13 +673,10 @@ impl DiscordHttpClient {
             self.ratelimit.pre_hook(&Method::POST, &path, &route_key).await;
         }
 
+        let creds = self.credentials();
         let mut request = self.client.post(&url).multipart(form);
-        request = self.apply_common_headers(request, None);
-        for (key, value) in &self.custom_headers {
-            if key.to_lowercase() != "authorization" {
-                request = request.header(key.as_str(), value.as_str());
-            }
-        }
+        request = Self::apply_common_headers(request, &creds, self.fingerprint(), None);
+        request = Self::apply_custom_headers(request, &creds, true);
         debug!("Raw multipart POST: {}", url);
         let response = request.send().await?;
         let status = response.status();
@@ -552,7 +685,7 @@ impl DiscordHttpClient {
         }
         if status.is_success() {
             let text = response.text().await?;
-            return serde_json::from_str(&text).map_err(DiscordError::Json);
+            return parse_body(&text);
         }
         let code = status.as_u16();
         if code == 401 || code == 403 || code == 429 {
@@ -575,10 +708,7 @@ impl DiscordHttpClient {
     async fn request_with_referer<T: DeserializeOwned, B: Serialize>(&self, method: Method, route: crate::route::Route<'_>, body: Option<B>, referer: Option<&str>) -> Result<T> {
         let response = self.do_request_with_referer(method, route, body, referer, None).await?;
         let text = response.text().await?;
-        serde_json::from_str(&text).map_err(|e| {
-            error!(error = %e, body = %text, "Failed to parse response");
-            DiscordError::Json(e)
-        })
+        parse_body(&text)
     }
 
     /// Make a request without expecting a response body
@@ -629,10 +759,7 @@ impl DiscordHttpClient {
     pub async fn request_with_reason<T: DeserializeOwned, B: Serialize>(&self, method: Method, route: crate::route::Route<'_>, body: Option<B>, reason: Option<&str>) -> Result<T> {
         let response = self.do_request_with_referer(method, route, body, None, reason).await?;
         let text = response.text().await?;
-        serde_json::from_str(&text).map_err(|e| {
-            error!(error = %e, body = %text, "Failed to parse response");
-            DiscordError::Json(e)
-        })
+        parse_body(&text)
     }
 
     /// Variant of [`request_with_reason`] that ignores the response body.
@@ -653,12 +780,13 @@ impl DiscordHttpClient {
     /// bare. The result is the same (we always send `self.token`) but the
     /// branches make the contract explicit and give us a hook for future
     /// per-flavor behaviour (e.g. dropping super-properties on bot tokens).
-    fn auth_header_value(&self) -> &str {
-        if self.token.starts_with("Bot ") || self.token.starts_with("Bearer ") {
-            &self.token
-        } else {
-            &self.token
-        }
+    fn auth_header_value(token: &str) -> &str {
+        token
+    }
+
+    /// The client-fingerprint headers a user token carries, as configured.
+    fn fingerprint(&self) -> Fingerprint<'_> {
+        Fingerprint { super_properties_b64: self.super_properties_b64.as_deref(), locale: self.discord_locale.as_deref(), timezone: self.discord_timezone.as_deref() }
     }
 
     /// Apply Discord-specific shared headers (auth, super-properties,
@@ -678,25 +806,24 @@ impl DiscordHttpClient {
     ///   and returns HTTP 403 with body `{"message":"internal network error","code":40333}`
     ///   — visible to operators as "Missing permission" even when the bot
     ///   has Administrator.
-    fn apply_common_headers(&self, mut request: reqwest::RequestBuilder, reason: Option<&str>) -> reqwest::RequestBuilder {
+    fn apply_common_headers(mut request: reqwest::RequestBuilder, creds: &Credentials, fingerprint: Fingerprint<'_>, reason: Option<&str>) -> reqwest::RequestBuilder {
         // Authorization. Bot/Bearer tokens are passed through verbatim;
         // user tokens stay bare. Identical wire shape; the predicate below
         // gates the rest of the header set.
-        let auth = self.auth_header_value();
-        request = request.header(header::AUTHORIZATION, auth);
+        request = request.header(header::AUTHORIZATION, Self::auth_header_value(&creds.token));
 
-        if self.is_application_token() {
+        if is_application_token(&creds.token) {
             // Bot path: override User-Agent and skip the fingerprint headers.
             request = request.header(header::USER_AGENT, concat!("DiscordBot (https://github.com/lengoclongk59/discord-user-rs, ", env!("CARGO_PKG_VERSION"), ")"));
         } else {
             // User-token path: full client fingerprint.
-            if let Some(sp) = self.super_properties_b64.as_deref() {
+            if let Some(sp) = fingerprint.super_properties_b64 {
                 request = request.header("X-Super-Properties", sp);
             }
-            if let Some(loc) = self.discord_locale.as_deref() {
+            if let Some(loc) = fingerprint.locale {
                 request = request.header("X-Discord-Locale", loc);
             }
-            if let Some(tz) = self.discord_timezone.as_deref() {
+            if let Some(tz) = fingerprint.timezone {
                 request = request.header("X-Discord-Timezone", tz);
             }
         }
@@ -714,7 +841,7 @@ impl DiscordHttpClient {
     async fn do_request_with_referer<B: Serialize>(&self, method: Method, route: crate::route::Route<'_>, body: Option<B>, referer: Option<&str>, reason: Option<&str>) -> Result<Response> {
         let path_cow = route.path();
         let endpoint = path_cow.as_ref();
-        let url = if endpoint.starts_with("http") { endpoint.to_string() } else { format!("{}/{}", API_BASE, endpoint.trim_start_matches('/')) };
+        let url = self.url_for(endpoint);
         let route_key = Ratelimit::get_route_key(&method, endpoint);
 
         for attempt in 0..DEFAULT_RETRY_COUNT {
@@ -725,11 +852,12 @@ impl DiscordHttpClient {
                 self.ratelimit.pre_hook(&method, endpoint, &route_key).await;
             }
 
+            let creds = self.credentials();
             let mut request = self.client.request(method.clone(), &url);
 
             // Add authorization, super-properties, locale, timezone, and
             // optional audit-log reason headers.
-            request = self.apply_common_headers(request, reason);
+            request = Self::apply_common_headers(request, &creds, self.fingerprint(), reason);
 
             // Add referer header if provided
             if let Some(ref_url) = referer {
@@ -737,11 +865,7 @@ impl DiscordHttpClient {
             }
 
             // Add custom headers
-            for (key, value) in &self.custom_headers {
-                if key.to_lowercase() != "authorization" {
-                    request = request.header(key.as_str(), value.as_str());
-                }
-            }
+            request = Self::apply_custom_headers(request, &creds, false);
 
             // Add body if present
             if let Some(ref b) = body {
@@ -781,7 +905,7 @@ impl DiscordHttpClient {
                             self.ratelimit.record_429(&route_key, response.headers(), info.retry_after);
                         }
 
-                        if self.ratelimiter_disabled {
+                        if self.ratelimiter_disabled || !self.resend.resends_after_rate_limit() {
                             return Err(DiscordError::RateLimited { retry_after: info.retry_after, bucket: info.bucket, global: info.global, scope: info.scope });
                         }
 
@@ -882,8 +1006,8 @@ impl DiscordHttpClient {
 
                     error!(status = %status, error_body = %error_body, "HTTP error");
 
-                    // Retry on server errors
-                    if status.is_server_error() && attempt < DEFAULT_RETRY_COUNT - 1 {
+                    // Retry on server errors, when the outcome may be repeated
+                    if status.is_server_error() && attempt < DEFAULT_RETRY_COUNT - 1 && self.resend.resends_after_unknown_outcome(&method) {
                         tokio::time::sleep(Duration::from_secs(2)).await;
                         continue;
                     }
@@ -896,7 +1020,7 @@ impl DiscordHttpClient {
                 }
                 Err(e) => {
                     error!(error = %e, "Request error");
-                    if attempt < DEFAULT_RETRY_COUNT - 1 {
+                    if attempt < DEFAULT_RETRY_COUNT - 1 && self.resend.resends_after_unknown_outcome(&method) {
                         tokio::time::sleep(Duration::from_secs(2)).await;
                         continue;
                     }
@@ -956,6 +1080,20 @@ impl DiscordHttpClient {
     }
 }
 
+/// The client-fingerprint headers a user-token request carries.
+#[derive(Clone, Copy)]
+struct Fingerprint<'a> {
+    super_properties_b64: Option<&'a str>,
+    locale: Option<&'a str>,
+    timezone: Option<&'a str>,
+}
+
+/// A bot (`Bot `) or OAuth2 (`Bearer `) token, as opposed to a user token.
+fn is_application_token(token: &str) -> bool {
+    let t = token.trim_start();
+    t.starts_with("Bot ") || t.starts_with("Bearer ")
+}
+
 #[cfg(test)]
 mod tests {
     use reqwest::header::{HeaderMap, HeaderValue};
@@ -998,6 +1136,61 @@ mod tests {
         assert_eq!(n1, 1);
         assert_eq!(n2, 2);
         assert_eq!(tracker.count().await, 2);
+    }
+
+    #[test]
+    fn the_default_policy_resends_only_what_cannot_be_carried_out_twice() {
+        let policy = ResendPolicy::default();
+        assert_eq!(policy, ResendPolicy::IdempotentOnly);
+        assert!(policy.resends_after_rate_limit());
+        for method in [Method::GET, Method::HEAD, Method::OPTIONS, Method::PUT, Method::DELETE] {
+            assert!(policy.resends_after_unknown_outcome(&method), "{method}");
+        }
+        for method in [Method::POST, Method::PATCH] {
+            assert!(!policy.resends_after_unknown_outcome(&method), "{method}");
+        }
+    }
+
+    #[test]
+    fn the_never_policy_resends_nothing() {
+        let policy = ResendPolicy::Never;
+        assert!(!policy.resends_after_rate_limit());
+        for method in [Method::GET, Method::PUT, Method::DELETE, Method::POST, Method::PATCH] {
+            assert!(!policy.resends_after_unknown_outcome(&method), "{method}");
+        }
+    }
+
+    #[test]
+    fn an_empty_body_reads_as_null() {
+        parse_body::<()>("").unwrap();
+        parse_body::<()>("  ").unwrap();
+        assert_eq!(parse_body::<Option<u8>>("").unwrap(), None);
+        assert_eq!(parse_body::<u8>("7").unwrap(), 7);
+        assert!(parse_body::<u8>("").is_err());
+    }
+
+    #[test]
+    fn a_replaced_credential_reaches_every_clone() {
+        let client = DiscordHttpClient::new("first", None, false);
+        let clone = client.clone();
+        client.set_token("second");
+        assert_eq!(clone.token(), "second");
+
+        let headers = HashMap::from([("Authorization".to_string(), "third".to_string()), ("cookie".to_string(), "a=b".to_string())]);
+        assert!(clone.replace_headers(headers));
+        assert_eq!(client.token(), "third");
+        assert_eq!(client.credentials().headers.get("cookie").map(String::as_str), Some("a=b"));
+
+        assert!(!client.replace_headers(HashMap::from([("cookie".to_string(), "c=d".to_string())])));
+        assert_eq!(client.token(), "third", "a refused replacement changes nothing");
+    }
+
+    #[test]
+    fn a_relative_route_goes_to_the_configured_base() {
+        let client = DiscordHttpClient::new("t", None, false).with_api_base("http://127.0.0.1:9/api/v10/");
+        assert_eq!(client.url_for("channels/1/messages"), "http://127.0.0.1:9/api/v10/channels/1/messages");
+        assert_eq!(client.url_for("https://discord.com/api/v9/interactions"), "https://discord.com/api/v9/interactions");
+        assert_eq!(DiscordHttpClient::new("t", None, false).url_for("/users/@me"), format!("{API_BASE}/users/@me"));
     }
 
     #[test]

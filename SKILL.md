@@ -10,7 +10,7 @@ description: Use when working in the discord-user-rs repo (or any clone of it) a
 `discord` is the full-featured Discord **client CLI** bundled with the `discord-user-rs` library. It logs into Discord with a **user token** (self-bot — violates Discord ToS, use at your own risk) or a **bot/bearer token**, and does two things:
 
 1. **Acts as a client** — send/edit/delete/react to messages (with file/sticker/voice attachments), DMs, group DMs, threads, channels, roles, bans, invites, emojis, stickers, soundboard, webhooks, scheduled events, stage instances, AutoMod rules, application commands, relationships, presence/status, your own profile, guild templates/welcome-screen/onboarding/widget/integrations, polls, embeds, etc. (`dc` write commands).
-2. **Archives + queries offline** — syncs guilds/channels into a local SQLite DB (`discord.db`) and runs search/stats/export/timeline over it with no network.
+2. **Archives + queries offline** — syncs guilds/channels into a local SQLite DB (`~/.discord/discord.db` by default) and runs search/stats/export/timeline over it with no network.
 
 ### Read vs write architecture (for maintainers)
 
@@ -56,7 +56,7 @@ Tokens are wrapped in `Zeroizing<String>` (scrubbed on drop). Masked form is `<f
 | Flag | Purpose |
 |---|---|
 | `--token <T>` | Override token resolution |
-| `--db <PATH>` | SQLite path (default `./discord.db`) |
+| `--db <PATH>` | SQLite archive path (default `$DISCORD_DB`, else `~/.discord/discord.db`) |
 | `--json` | Output as JSON (machine-readable) |
 | `--no-color` | Disable ANSI (also honors `$NO_COLOR`) |
 
@@ -65,7 +65,7 @@ Logging uses `tracing`; set `RUST_LOG=info` (or `debug`) for gateway/HTTP detail
 ## Command map
 
 - **`dc <...>`** — talks to Discord's REST/Gateway API (needs token + network). Split into **read** ops and **write/client** ops (flat verbs + nested groups).
-- **Everything else** (top-level) — operates on the local `discord.db` archive, offline.
+- **Everything else** (top-level) — operates on the local SQLite archive, offline.
 
 ID arguments are raw snowflakes for write commands. Read commands that take `<guild>` also accept a case-insensitive name substring; many also accept a stored channel name from the archive.
 
@@ -142,7 +142,7 @@ Run `discord dc <group> --help` for each. All take raw snowflake IDs (validated 
 | `dc stage` | `start <channel> <topic> [--privacy 1\|2] [--send-start-notification]` (topic 1-120, privacy default 2=GUILD_ONLY), `get <channel>`, `edit <channel> [--topic/--privacy]`, `stop <channel> [-y]` |
 | `dc command` | `list [--guild G]`, `get [--guild G] <command_id>`, `create <name> <description> [--guild G] [--type 1\|2\|3]` (registers an app command; works for bot/application tokens), `delete [--guild G] <command_id> [-y]`, `run <channel> <command_name>` (**not supported over REST for user tokens — prints an explanation; use `list`/`create` instead**) |
 
-### Local archive commands (offline, operate on `discord.db`)
+### Local archive commands (offline, operate on the SQLite archive)
 
 | Command | What it does |
 |---|---|
@@ -218,7 +218,9 @@ discord dc notify read-guild 111       # mark a whole guild read
 - **Audit-log `--reason`** is supported on `ban add/remove`, `member kick/timeout/untimeout`, and `channel delete`.
 - **`mobile_network_type`** fingerprint is auto-added on message sends for user tokens and omitted for `Bot `/`Bearer ` tokens (Discord 403 code 40333 otherwise).
 - **Hardcoded gateway client build number** in the IDENTIFY handshake — must be refreshed periodically when Discord pushes new client versions (symptom: gateway closes immediately / rejects identify). Gateway host is hardcoded to `wss://gateway-us-east1-c.discord.gg`.
-- **`.env` is read from CWD only**, not walked up (by design). **`--db` defaults to `./discord.db`** relative to CWD — switching directories silently switches archives.
+- **`.env` is read from CWD only**, not walked up (by design).
+- **The archive is per-user, not CWD-relative:** `--db` → `$DISCORD_DB` → `~/.discord/discord.db` (`%USERPROFILE%\.discord\discord.db` on Windows), with the parent directory created on first open. A leading `~` is expanded in either override (`~user` is left literal, since resolving it needs a passwd lookup). A directory or archive the CLI creates itself is chmod'd `0700`/`0600` — it holds message bodies — while a pre-existing one is left untouched. Only when no home directory can be resolved does it fall back to `./discord.db`. Archives written by ≤ 0.6.1, which defaulted to `./discord.db`, are not picked up automatically — the CLI prints a warning whenever a stranded `./discord.db` is present; move the file or point `$DISCORD_DB` at it.
+- **`DISCORD_DB` works only as a real environment variable, not from `.env`.** The archive path is resolved in `Ctx::from_cli` before any command runs, whereas `.env` is loaded lazily by `resolve_token`, so a `DISCORD_DB=` line in `.env` is read too late and is silently ignored — unlike `DISCORD_TOKEN=`, which works there. Export it in the shell or pass `--db`.
 - **Rate limiting:** the HTTP client parses `X-RateLimit-*` and retries up to 5× with backoff; per-route buckets normalize all-digit path segments to `{id}`. Sustained 429s mean you're going too fast (Cloudflare 1015 IP-ban risk).
 
 ## Source map (extending the CLI)
@@ -234,7 +236,7 @@ discord dc notify read-guild 111       # mark a whole guild read
 | Write REST wrapper (`WriteApi`/`WriteHttp`) | `src/cli/api.rs` + `src/cli/api_<domain>.rs` (incl. `api_account`, `api_automod`, `api_soundboard`, `api_stage`, `api_commands`, `api_usersettings`) |
 | Multipart upload helpers (files / stickers / voice / soundboard / images) | `post_raw_multipart`, `post_message_with_files`, `send_message_with_files`, `send_voice_message`, `build_file_part`, `guess_mime` in `src/cli/api.rs` |
 | Generic endpoint escape hatch | `Route::Custom` in `src/route.rs` |
-| Token resolution + `.env` upsert | `src/cli/config.rs` |
+| Token resolution, default archive path, `.env` upsert | `src/cli/config.rs` |
 | Token auto-discovery (per-platform) | `src/cli/auth/{windows,macos,linux}.rs` |
 | SQLite schema + queries | `src/cli/db.rs` |
 | Output (tables, JSON, colors, `confirm()`) | `src/cli/output.rs` |
