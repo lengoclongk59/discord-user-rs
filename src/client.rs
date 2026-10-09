@@ -1131,8 +1131,8 @@ mod tests {
     async fn invalid_request_tracker_counts_and_prunes() {
         let tracker = InvalidRequestTracker::default();
         assert_eq!(tracker.count().await, 0);
-        let n1 = tracker.record().await;
-        let n2 = tracker.record().await;
+        let n1 = tracker.record().await.unwrap();
+        let n2 = tracker.record().await.unwrap();
         assert_eq!(n1, 1);
         assert_eq!(n2, 2);
         assert_eq!(tracker.count().await, 2);
