@@ -184,7 +184,7 @@ impl DiscordUser {
     pub async fn init(&mut self) -> Result<()> {
         use crate::operations::RelationshipOps;
 
-        let token = self.http.token().to_string();
+        let token = self.http.token();
         let (mut gateway, event_receiver) = Gateway::new_with_capabilities(token, self.custom_status, self.event_buffer_size, self.capabilities);
         if let Some(intents) = self.intents {
             gateway = gateway.with_intents(intents);
@@ -678,6 +678,7 @@ pub struct DiscordUserBuilder {
     ratelimit_callback: Option<std::sync::Arc<dyn Fn(crate::client::RatelimitInfo) + Send + Sync>>,
     proxy: Option<String>,
     ratelimiter_disabled: bool,
+    resend_policy: crate::client::ResendPolicy,
     capabilities: u32,
     /// Optional gateway intents bitmask for bot-token connections. See
     /// [`DiscordUser::with_intents`] for semantics.
@@ -703,6 +704,7 @@ impl DiscordUserBuilder {
             ratelimit_callback: None,
             proxy: None,
             ratelimiter_disabled: false,
+            resend_policy: crate::client::ResendPolicy::default(),
             capabilities: 16381,
             intents: None,
             #[cfg(feature = "cache")]
@@ -770,6 +772,13 @@ impl DiscordUserBuilder {
         self
     }
 
+    /// Choose when a failed REST request may be sent again. See
+    /// [`ResendPolicy`](crate::client::ResendPolicy).
+    pub fn resend_policy(mut self, policy: crate::client::ResendPolicy) -> Self {
+        self.resend_policy = policy;
+        self
+    }
+
     /// Enable bot-token IDENTIFY mode by setting the gateway `intents`
     /// bitmask. See [`DiscordUser::with_intents`] for the full semantics
     /// and the Developer Portal requirements for privileged intents.
@@ -782,7 +791,7 @@ impl DiscordUserBuilder {
     pub fn build(self) -> Result<DiscordUser> {
         let token = self.token.ok_or_else(|| crate::error::DiscordError::InvalidRequest("Token is required".into()))?;
 
-        let mut http = DiscordHttpClient::new(&token, self.proxy, self.ratelimiter_disabled);
+        let mut http = DiscordHttpClient::new(&token, self.proxy, self.ratelimiter_disabled).with_resend_policy(self.resend_policy);
         if let Some(cb) = self.ratelimit_callback {
             http.set_ratelimit_callback(cb);
         }

@@ -1,5 +1,59 @@
 # Changelog
 
+## Unreleased
+
+The REST client stops sending a request twice when the first attempt may
+already have been carried out, and its credential can be replaced while it is
+in use. Both were found auditing the crate as the transport of a dashboard
+that posts as a user account: a POST that timed out could become several
+messages, and a rotated token meant a new client and lost rate-limit state.
+
+### Changed — library: when a REST request is sent again
+
+- **A POST or a PATCH is never sent again after a 5xx or a transport failure.**
+  It used to be re-sent up to five times on a 5xx, a timeout or a reset
+  connection. Discord may already have carried out the first attempt, and
+  `send_message` carries no nonce, so one call could post up to five
+  messages. GET, HEAD, OPTIONS, PUT and DELETE are still re-sent there.
+  A 429 is still waited out and re-sent for every method: Discord carried
+  nothing out.
+- **`post_multipart` is never re-sent after a transport failure**, for the
+  same reason. It is still re-sent after a 429.
+- The policy is `client::ResendPolicy`: `IdempotentOnly` (the default,
+  described above) or `Never`, which re-sends nothing and returns a 429 as
+  `DiscordError::RateLimited`, the bucket still recorded so the next request
+  waits for its reset. Set it with `DiscordHttpClient::with_resend_policy` or
+  `DiscordUserBuilder::resend_policy`.
+
+### Changed — library: breaking
+
+- `DiscordHttpClient::token()` returns `String` instead of `&str`, because the
+  token can now be replaced while the client is shared.
+
+### Fixed — library
+
+- A PUT, POST or PATCH answered 204 with an empty body no longer returns
+  `DiscordError::Json` through `put::<()>` and its siblings. Pinning a
+  message, adding a reaction and joining or adding to a thread all failed
+  this way after Discord had carried them out. An empty body now reads as
+  JSON `null`, which `()` and `Option<_>` accept.
+- A configured `content-type` header is no longer sent beside a multipart
+  request's own `multipart/form-data; boundary=…`, which made two.
+- A response body that fails to parse is logged by its length, not its text.
+
+### Added — library
+
+- `DiscordHttpClient::set_token` and `replace_headers` replace the credential
+  for every later request on the client and all its clones, keeping the
+  rate-limit buckets. `replace_headers` takes the token from the
+  `authorization` entry, as `with_headers` does, and refuses a map without
+  one.
+- `DiscordHttpClient::with_api_base` sends relative routes somewhere other
+  than `client::API_BASE` (now public): a stand-in server in a test, or a
+  recording proxy.
+- `tests/rest_loopback.rs` drives the client against a scripted HTTP server
+  on 127.0.0.1 and counts how many times each call was sent.
+
 ## 0.7.0
 
 The gateway can now run as the socket layer of another program: a sans-IO
