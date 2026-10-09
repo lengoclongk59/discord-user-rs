@@ -61,7 +61,11 @@ pub trait WebhookOps: DiscordContext {
     /// # Permissions
     /// Requires MANAGE_WEBHOOKS permission.
     async fn get_channel_webhooks(&self, channel_id: &ChannelId) -> Result<Vec<Webhook>> {
-        self.http().get(Route::GetChannelWebhooks { channel_id: channel_id.get() }).await
+        self.http()
+            .get(Route::GetChannelWebhooks {
+                channel_id: channel_id.get(),
+            })
+            .await
     }
 
     /// Get all webhooks in a guild.
@@ -72,7 +76,11 @@ pub trait WebhookOps: DiscordContext {
     /// # Permissions
     /// Requires MANAGE_WEBHOOKS permission.
     async fn get_guild_webhooks(&self, guild_id: &GuildId) -> Result<Vec<Webhook>> {
-        self.http().get(Route::GetGuildWebhooks { guild_id: guild_id.get() }).await
+        self.http()
+            .get(Route::GetGuildWebhooks {
+                guild_id: guild_id.get(),
+            })
+            .await
     }
 
     /// Create a webhook in a channel.
@@ -82,8 +90,19 @@ pub trait WebhookOps: DiscordContext {
     ///
     /// # Permissions
     /// Requires MANAGE_WEBHOOKS permission.
-    async fn create_webhook(&self, channel_id: &ChannelId, req: CreateWebhookRequest) -> Result<Webhook> {
-        self.http().post(Route::CreateWebhook { channel_id: channel_id.get() }, req).await
+    async fn create_webhook(
+        &self,
+        channel_id: &ChannelId,
+        req: CreateWebhookRequest,
+    ) -> Result<Webhook> {
+        self.http()
+            .post(
+                Route::CreateWebhook {
+                    channel_id: channel_id.get(),
+                },
+                req,
+            )
+            .await
     }
 
     /// Get a webhook by ID (requires authentication).
@@ -92,7 +111,11 @@ pub trait WebhookOps: DiscordContext {
     /// Returns [`DiscordError::Http`] on HTTP failure or if the webhook is not
     /// found.
     async fn get_webhook(&self, webhook_id: &WebhookId) -> Result<Webhook> {
-        self.http().get(Route::GetWebhook { webhook_id: webhook_id.get() }).await
+        self.http()
+            .get(Route::GetWebhook {
+                webhook_id: webhook_id.get(),
+            })
+            .await
     }
 
     /// Get a webhook using its ID and token (no authentication required).
@@ -101,7 +124,12 @@ pub trait WebhookOps: DiscordContext {
     /// Returns [`DiscordError::Http`] on HTTP failure or if the webhook/token
     /// pair is invalid.
     async fn get_webhook_with_token(&self, webhook_id: &WebhookId, token: &str) -> Result<Webhook> {
-        self.http().get(Route::GetWebhookWithToken { webhook_id: webhook_id.get(), token }).await
+        self.http()
+            .get(Route::GetWebhookWithToken {
+                webhook_id: webhook_id.get(),
+                token,
+            })
+            .await
     }
 
     /// Edit a webhook's name, avatar, or channel.
@@ -111,8 +139,19 @@ pub trait WebhookOps: DiscordContext {
     ///
     /// # Permissions
     /// Requires MANAGE_WEBHOOKS permission.
-    async fn edit_webhook(&self, webhook_id: &WebhookId, req: EditWebhookRequest) -> Result<Webhook> {
-        self.http().patch(Route::EditWebhook { webhook_id: webhook_id.get() }, req).await
+    async fn edit_webhook(
+        &self,
+        webhook_id: &WebhookId,
+        req: EditWebhookRequest,
+    ) -> Result<Webhook> {
+        self.http()
+            .patch(
+                Route::EditWebhook {
+                    webhook_id: webhook_id.get(),
+                },
+                req,
+            )
+            .await
     }
 
     /// Edit a webhook using its token (no authentication required).
@@ -122,8 +161,21 @@ pub trait WebhookOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn edit_webhook_with_token(&self, webhook_id: &WebhookId, token: &str, req: EditWebhookRequest) -> Result<Webhook> {
-        self.http().patch(Route::EditWebhookWithToken { webhook_id: webhook_id.get(), token }, req).await
+    async fn edit_webhook_with_token(
+        &self,
+        webhook_id: &WebhookId,
+        token: &str,
+        req: EditWebhookRequest,
+    ) -> Result<Webhook> {
+        self.http()
+            .patch(
+                Route::EditWebhookWithToken {
+                    webhook_id: webhook_id.get(),
+                    token,
+                },
+                req,
+            )
+            .await
     }
 
     /// Delete a webhook permanently.
@@ -134,7 +186,11 @@ pub trait WebhookOps: DiscordContext {
     /// # Permissions
     /// Requires MANAGE_WEBHOOKS permission.
     async fn delete_webhook(&self, webhook_id: &WebhookId) -> Result<()> {
-        self.http().delete(Route::DeleteWebhook { webhook_id: webhook_id.get() }).await
+        self.http()
+            .delete(Route::DeleteWebhook {
+                webhook_id: webhook_id.get(),
+            })
+            .await
     }
 
     /// Delete a webhook using its token (no authentication required).
@@ -142,15 +198,33 @@ pub trait WebhookOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
     async fn delete_webhook_with_token(&self, webhook_id: &WebhookId, token: &str) -> Result<()> {
-        self.http().delete(Route::DeleteWebhookWithToken { webhook_id: webhook_id.get(), token }).await
+        self.http()
+            .delete(Route::DeleteWebhookWithToken {
+                webhook_id: webhook_id.get(),
+                token,
+            })
+            .await
     }
 
     /// Execute a webhook — sends a message via the webhook.
     ///
     /// Discord returns 204 No Content by default. To receive the posted
     /// `Message` back, append `?wait=true` — not yet implemented here.
-    async fn execute_webhook(&self, webhook_id: &WebhookId, token: &str, req: ExecuteWebhookRequest) -> Result<()> {
-        self.http().post_no_response(Route::ExecuteWebhook { webhook_id: webhook_id.get(), token }, req).await
+    async fn execute_webhook(
+        &self,
+        webhook_id: &WebhookId,
+        token: &str,
+        req: ExecuteWebhookRequest,
+    ) -> Result<()> {
+        self.http()
+            .post_no_response(
+                Route::ExecuteWebhook {
+                    webhook_id: webhook_id.get(),
+                    token,
+                },
+                req,
+            )
+            .await
     }
 
     /// Execute a webhook with a Slack-formatted payload.
@@ -163,7 +237,14 @@ pub trait WebhookOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn execute_webhook_slack(&self, webhook_id: &WebhookId, token: &str, wait: bool, thread_id: Option<u64>, body: Value) -> Result<Option<Message>> {
+    async fn execute_webhook_slack(
+        &self,
+        webhook_id: &WebhookId,
+        token: &str,
+        wait: bool,
+        thread_id: Option<u64>,
+        body: Value,
+    ) -> Result<Option<Message>> {
         // Inline the URL: stuff `slack` plus the query string into the
         // existing `ExecuteWebhook` route's `token` field, which produces
         // `webhooks/{id}/{token}` — yielding the full path we need.
@@ -172,10 +253,27 @@ pub trait WebhookOps: DiscordContext {
             None => format!("{}/slack?wait={}", token, wait),
         };
         if wait {
-            let msg: Message = self.http().post(Route::ExecuteWebhook { webhook_id: webhook_id.get(), token: &suffix }, body).await?;
+            let msg: Message = self
+                .http()
+                .post(
+                    Route::ExecuteWebhook {
+                        webhook_id: webhook_id.get(),
+                        token: &suffix,
+                    },
+                    body,
+                )
+                .await?;
             Ok(Some(msg))
         } else {
-            self.http().post_no_response(Route::ExecuteWebhook { webhook_id: webhook_id.get(), token: &suffix }, body).await?;
+            self.http()
+                .post_no_response(
+                    Route::ExecuteWebhook {
+                        webhook_id: webhook_id.get(),
+                        token: &suffix,
+                    },
+                    body,
+                )
+                .await?;
             Ok(None)
         }
     }
@@ -189,16 +287,40 @@ pub trait WebhookOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn execute_webhook_github(&self, webhook_id: &WebhookId, token: &str, wait: bool, thread_id: Option<u64>, body: Value) -> Result<Option<Message>> {
+    async fn execute_webhook_github(
+        &self,
+        webhook_id: &WebhookId,
+        token: &str,
+        wait: bool,
+        thread_id: Option<u64>,
+        body: Value,
+    ) -> Result<Option<Message>> {
         let suffix: String = match thread_id {
             Some(tid) => format!("{}/github?wait={}&thread_id={}", token, wait, tid),
             None => format!("{}/github?wait={}", token, wait),
         };
         if wait {
-            let msg: Message = self.http().post(Route::ExecuteWebhook { webhook_id: webhook_id.get(), token: &suffix }, body).await?;
+            let msg: Message = self
+                .http()
+                .post(
+                    Route::ExecuteWebhook {
+                        webhook_id: webhook_id.get(),
+                        token: &suffix,
+                    },
+                    body,
+                )
+                .await?;
             Ok(Some(msg))
         } else {
-            self.http().post_no_response(Route::ExecuteWebhook { webhook_id: webhook_id.get(), token: &suffix }, body).await?;
+            self.http()
+                .post_no_response(
+                    Route::ExecuteWebhook {
+                        webhook_id: webhook_id.get(),
+                        token: &suffix,
+                    },
+                    body,
+                )
+                .await?;
             Ok(None)
         }
     }
@@ -210,7 +332,13 @@ pub trait WebhookOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure or if the message has
     /// already been deleted.
-    async fn get_webhook_message(&self, webhook_id: &WebhookId, token: &str, message_id: &MessageId, thread_id: Option<u64>) -> Result<Message> {
+    async fn get_webhook_message(
+        &self,
+        webhook_id: &WebhookId,
+        token: &str,
+        message_id: &MessageId,
+        thread_id: Option<u64>,
+    ) -> Result<Message> {
         // Compose the trailing path inline: `{token}/messages/{message_id}`
         // (plus optional thread_id query) lands inside `ExecuteWebhook`'s
         // token slot to produce `webhooks/{id}/{token}/messages/{mid}`.
@@ -218,7 +346,12 @@ pub trait WebhookOps: DiscordContext {
             Some(tid) => format!("{}/messages/{}?thread_id={}", token, message_id.get(), tid),
             None => format!("{}/messages/{}", token, message_id.get()),
         };
-        self.http().get(Route::GetWebhookWithToken { webhook_id: webhook_id.get(), token: &suffix }).await
+        self.http()
+            .get(Route::GetWebhookWithToken {
+                webhook_id: webhook_id.get(),
+                token: &suffix,
+            })
+            .await
     }
 
     /// Edit a previously-sent webhook message.
@@ -229,12 +362,27 @@ pub trait WebhookOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn edit_webhook_message(&self, webhook_id: &WebhookId, token: &str, message_id: &MessageId, thread_id: Option<u64>, body: Value) -> Result<Message> {
+    async fn edit_webhook_message(
+        &self,
+        webhook_id: &WebhookId,
+        token: &str,
+        message_id: &MessageId,
+        thread_id: Option<u64>,
+        body: Value,
+    ) -> Result<Message> {
         let suffix: String = match thread_id {
             Some(tid) => format!("{}/messages/{}?thread_id={}", token, message_id.get(), tid),
             None => format!("{}/messages/{}", token, message_id.get()),
         };
-        self.http().patch(Route::EditWebhookWithToken { webhook_id: webhook_id.get(), token: &suffix }, body).await
+        self.http()
+            .patch(
+                Route::EditWebhookWithToken {
+                    webhook_id: webhook_id.get(),
+                    token: &suffix,
+                },
+                body,
+            )
+            .await
     }
 
     /// Delete a previously-sent webhook message.
@@ -243,12 +391,23 @@ pub trait WebhookOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn delete_webhook_message(&self, webhook_id: &WebhookId, token: &str, message_id: &MessageId, thread_id: Option<u64>) -> Result<()> {
+    async fn delete_webhook_message(
+        &self,
+        webhook_id: &WebhookId,
+        token: &str,
+        message_id: &MessageId,
+        thread_id: Option<u64>,
+    ) -> Result<()> {
         let suffix: String = match thread_id {
             Some(tid) => format!("{}/messages/{}?thread_id={}", token, message_id.get(), tid),
             None => format!("{}/messages/{}", token, message_id.get()),
         };
-        self.http().delete(Route::DeleteWebhookWithToken { webhook_id: webhook_id.get(), token: &suffix }).await
+        self.http()
+            .delete(Route::DeleteWebhookWithToken {
+                webhook_id: webhook_id.get(),
+                token: &suffix,
+            })
+            .await
     }
 
     /// List all emojis owned by an application.
@@ -260,7 +419,12 @@ pub trait WebhookOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
     async fn list_application_emojis(&self, application_id: &ApplicationId) -> Result<Vec<Emoji>> {
-        let resp: ApplicationEmojiList = self.http().get(Route::ApplicationEmojis { application_id: application_id.get() }).await?;
+        let resp: ApplicationEmojiList = self
+            .http()
+            .get(Route::ApplicationEmojis {
+                application_id: application_id.get(),
+            })
+            .await?;
         Ok(resp.items)
     }
 
@@ -271,8 +435,17 @@ pub trait WebhookOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure or if the emoji is
     /// not owned by the application.
-    async fn get_application_emoji(&self, application_id: &ApplicationId, emoji_id: &EmojiId) -> Result<Emoji> {
-        self.http().get(Route::ApplicationEmoji { application_id: application_id.get(), emoji_id: emoji_id.get() }).await
+    async fn get_application_emoji(
+        &self,
+        application_id: &ApplicationId,
+        emoji_id: &EmojiId,
+    ) -> Result<Emoji> {
+        self.http()
+            .get(Route::ApplicationEmoji {
+                application_id: application_id.get(),
+                emoji_id: emoji_id.get(),
+            })
+            .await
     }
 
     /// Upload a new emoji owned by the application.
@@ -283,9 +456,21 @@ pub trait WebhookOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn create_application_emoji(&self, application_id: &ApplicationId, name: &str, image: &str) -> Result<Emoji> {
+    async fn create_application_emoji(
+        &self,
+        application_id: &ApplicationId,
+        name: &str,
+        image: &str,
+    ) -> Result<Emoji> {
         let body = json!({ "name": name, "image": image });
-        self.http().post(Route::ApplicationEmojis { application_id: application_id.get() }, body).await
+        self.http()
+            .post(
+                Route::ApplicationEmojis {
+                    application_id: application_id.get(),
+                },
+                body,
+            )
+            .await
     }
 
     /// Rename an application-owned emoji.
@@ -295,9 +480,22 @@ pub trait WebhookOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn modify_application_emoji(&self, application_id: &ApplicationId, emoji_id: &EmojiId, name: &str) -> Result<Emoji> {
+    async fn modify_application_emoji(
+        &self,
+        application_id: &ApplicationId,
+        emoji_id: &EmojiId,
+        name: &str,
+    ) -> Result<Emoji> {
         let body = json!({ "name": name });
-        self.http().patch(Route::ApplicationEmoji { application_id: application_id.get(), emoji_id: emoji_id.get() }, body).await
+        self.http()
+            .patch(
+                Route::ApplicationEmoji {
+                    application_id: application_id.get(),
+                    emoji_id: emoji_id.get(),
+                },
+                body,
+            )
+            .await
     }
 
     /// Delete an application-owned emoji.
@@ -307,8 +505,17 @@ pub trait WebhookOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn delete_application_emoji(&self, application_id: &ApplicationId, emoji_id: &EmojiId) -> Result<()> {
-        self.http().delete(Route::ApplicationEmoji { application_id: application_id.get(), emoji_id: emoji_id.get() }).await
+    async fn delete_application_emoji(
+        &self,
+        application_id: &ApplicationId,
+        emoji_id: &EmojiId,
+    ) -> Result<()> {
+        self.http()
+            .delete(Route::ApplicationEmoji {
+                application_id: application_id.get(),
+                emoji_id: emoji_id.get(),
+            })
+            .await
     }
 
     /// Get a single sticker by ID, regardless of pack or guild.
@@ -319,7 +526,11 @@ pub trait WebhookOps: DiscordContext {
     /// Returns [`DiscordError::Http`] on HTTP failure or if the sticker
     /// does not exist.
     async fn get_sticker(&self, sticker_id: &StickerId) -> Result<Sticker> {
-        self.http().get(Route::Sticker { sticker_id: sticker_id.get() }).await
+        self.http()
+            .get(Route::Sticker {
+                sticker_id: sticker_id.get(),
+            })
+            .await
     }
 
     /// List the standard sticker packs available to all users.
@@ -357,7 +568,13 @@ pub trait WebhookOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure or if the invite is
     /// invalid / expired.
-    async fn get_invite(&self, code: &str, with_counts: Option<bool>, with_expiration: Option<bool>, guild_scheduled_event_id: Option<u64>) -> Result<crate::types::guild::Invite> {
+    async fn get_invite(
+        &self,
+        code: &str,
+        with_counts: Option<bool>,
+        with_expiration: Option<bool>,
+        guild_scheduled_event_id: Option<u64>,
+    ) -> Result<crate::types::guild::Invite> {
         self.http()
             .get(Route::Invite {
                 code: Cow::Borrowed(code),

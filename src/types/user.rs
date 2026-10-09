@@ -90,7 +90,12 @@ impl User {
 
     /// Get avatar URL (WebP for static, GIF for animated) at a given size.
     pub fn avatar_url(&self, size: ImageSize) -> Option<String> {
-        self.avatar.as_ref().and_then(|hash| self.id.parse::<u64>().ok().map(|id| hash.user_avatar_url(id, Some(size))))
+        self.avatar.as_ref().and_then(|hash| {
+            self.id
+                .parse::<u64>()
+                .ok()
+                .map(|id| hash.user_avatar_url(id, Some(size)))
+        })
     }
 
     /// Return the Discord "tag" — `username#discriminator` for legacy accounts
@@ -98,7 +103,10 @@ impl User {
     ///
     /// Mirrors serenity's `User::tag()`.
     pub fn tag(&self) -> String {
-        if self.discriminator.is_empty() || self.discriminator == "0" || self.discriminator == "0000" {
+        if self.discriminator.is_empty()
+            || self.discriminator == "0"
+            || self.discriminator == "0000"
+        {
             self.username.clone()
         } else {
             format!("{}#{}", self.username, self.discriminator)
@@ -119,7 +127,10 @@ impl User {
     ///
     /// Mirrors serenity's `User::default_avatar_url()`.
     pub fn default_avatar_url(&self) -> String {
-        let index = if self.discriminator.is_empty() || self.discriminator == "0" || self.discriminator == "0000" {
+        let index = if self.discriminator.is_empty()
+            || self.discriminator == "0"
+            || self.discriminator == "0000"
+        {
             // Pomelo: use snowflake
             self.id.parse::<u64>().map(|id| (id >> 22) % 6).unwrap_or(0)
         } else {
@@ -134,7 +145,8 @@ impl User {
     ///
     /// Mirrors serenity's `User::face()`.
     pub fn face(&self) -> String {
-        self.avatar_url(ImageSize::Size128).unwrap_or_else(|| self.default_avatar_url())
+        self.avatar_url(ImageSize::Size128)
+            .unwrap_or_else(|| self.default_avatar_url())
     }
 
     /// Return the user's banner URL, if they have one.
@@ -146,8 +158,15 @@ impl User {
     pub fn banner_url(&self) -> Option<String> {
         let banner = self.banner.as_ref()?;
         let user_id = self.id.parse::<u64>().ok()?;
-        let ext = if banner.starts_with("a_") { "gif" } else { "webp" };
-        Some(format!("https://cdn.discordapp.com/banners/{}/{}.{}?size=512", user_id, banner, ext))
+        let ext = if banner.starts_with("a_") {
+            "gif"
+        } else {
+            "webp"
+        };
+        Some(format!(
+            "https://cdn.discordapp.com/banners/{}/{}.{}?size=512",
+            user_id, banner, ext
+        ))
     }
 }
 
@@ -196,7 +215,9 @@ pub struct Member {
 impl Member {
     /// Get display name (nick > global_name > username)
     pub fn display_name(&self) -> Option<&str> {
-        self.nick.as_deref().or_else(|| self.user.as_ref().map(|u| u.display_name()))
+        self.nick
+            .as_deref()
+            .or_else(|| self.user.as_ref().map(|u| u.display_name()))
     }
 
     /// Format this member as a mention string (`<@user_id>`).
@@ -206,7 +227,11 @@ impl Member {
     ///
     /// Mirrors serenity's `Member::mention()`.
     pub fn mention(&self) -> Option<String> {
-        let id = self.user.as_ref().map(|u| u.id.as_str()).or(self.user_id.as_deref())?;
+        let id = self
+            .user
+            .as_ref()
+            .map(|u| u.id.as_str())
+            .or(self.user_id.as_deref())?;
         Some(format!("<@{}>", id))
     }
 
@@ -222,7 +247,10 @@ impl Member {
             .as_deref()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| {
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
                 dt.timestamp() > now
             })
             .unwrap_or(false)
@@ -240,12 +268,18 @@ impl Member {
     /// Returns the user ID from the nested `user` object, or falls back to the
     /// top-level `user_id` field.  Returns `None` if neither is present.
     pub fn user_id_typed(&self) -> Option<UserId> {
-        self.user.as_ref().and_then(|u| u.id.parse().ok().map(UserId::new)).or_else(|| self.user_id.as_deref()?.parse().ok().map(UserId::new))
+        self.user
+            .as_ref()
+            .and_then(|u| u.id.parse().ok().map(UserId::new))
+            .or_else(|| self.user_id.as_deref()?.parse().ok().map(UserId::new))
     }
 
     /// Typed accessor for the member's roles as [`RoleId`] values.
     pub fn role_ids(&self) -> Vec<RoleId> {
-        self.roles.iter().filter_map(|s| s.parse().ok().map(RoleId::new)).collect()
+        self.roles
+            .iter()
+            .filter_map(|s| s.parse().ok().map(RoleId::new))
+            .collect()
     }
 }
 

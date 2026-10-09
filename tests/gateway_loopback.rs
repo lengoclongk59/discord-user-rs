@@ -13,7 +13,10 @@ use std::{
 };
 
 use discord_user::{
-    gateway::{default_close_verdict, CloseVerdict, FrameBuffer, Gateway, GatewayEvent, GatewayEvents, GatewayHooks, GatewayStatus, IdentifyDefaults, ReconnectCause},
+    gateway::{
+        default_close_verdict, CloseVerdict, FrameBuffer, Gateway, GatewayEvent, GatewayEvents,
+        GatewayHooks, GatewayStatus, IdentifyDefaults, ReconnectCause,
+    },
     ConnectionStage, DiscordError, DispatchEvent, ReconnectType, UserStatus,
 };
 use futures::{future::BoxFuture, SinkExt, StreamExt};
@@ -61,7 +64,9 @@ impl Server {
     }
 
     async fn accept(&self) -> Conn {
-        self.accept_within(WAIT).await.expect("gateway did not connect")
+        self.accept_within(WAIT)
+            .await
+            .expect("gateway did not connect")
     }
 
     // The upgrade callback's error type is tungstenite's, not ours to shrink.
@@ -89,11 +94,15 @@ struct Conn {
 
 impl Conn {
     async fn send(&mut self, frame: Value) {
-        self.ws.send(Message::Text(frame.to_string().into())).await.unwrap();
+        self.ws
+            .send(Message::Text(frame.to_string().into()))
+            .await
+            .unwrap();
     }
 
     async fn hello(&mut self, interval_ms: u64) {
-        self.send(json!({ "op": 10, "d": { "heartbeat_interval": interval_ms } })).await;
+        self.send(json!({ "op": 10, "d": { "heartbeat_interval": interval_ms } }))
+            .await;
     }
 
     async fn dispatch(&mut self, t: &str, s: u64, d: Value) {
@@ -101,7 +110,12 @@ impl Conn {
     }
 
     async fn ready(&mut self, session_id: &str, resume_url: &str) {
-        self.dispatch("READY", 1, json!({ "session_id": session_id, "resume_gateway_url": resume_url, "guilds": [] })).await;
+        self.dispatch(
+            "READY",
+            1,
+            json!({ "session_id": session_id, "resume_gateway_url": resume_url, "guilds": [] }),
+        )
+        .await;
     }
 
     /// The next frame the client sent with opcode `op`, skipping heartbeats.
@@ -114,7 +128,10 @@ impl Conn {
                         if frame["op"] == op {
                             return frame;
                         }
-                        assert_eq!(frame["op"], 1, "unexpected frame while waiting for op {op}: {frame}");
+                        assert_eq!(
+                            frame["op"], 1,
+                            "unexpected frame while waiting for op {op}: {frame}"
+                        );
                     }
                     Some(Ok(_)) => {}
                     other => panic!("socket ended while waiting for op {op}: {other:?}"),
@@ -126,7 +143,10 @@ impl Conn {
     }
 
     async fn close(&mut self, code: u16) {
-        let frame = CloseFrame { code: CloseCode::from(code), reason: "test".into() };
+        let frame = CloseFrame {
+            code: CloseCode::from(code),
+            reason: "test".into(),
+        };
         self.ws.close(Some(frame)).await.unwrap();
     }
 
@@ -154,13 +174,20 @@ async fn start(server: &Server) -> (Gateway, broadcast::Receiver<DispatchEvent>,
 }
 
 async fn next_event(rx: &mut broadcast::Receiver<DispatchEvent>) -> DispatchEvent {
-    timeout(WAIT, rx.recv()).await.expect("no dispatch within the wait").unwrap()
+    timeout(WAIT, rx.recv())
+        .await
+        .expect("no dispatch within the wait")
+        .unwrap()
 }
 
 async fn wait_for_stage(gw: &Gateway, stage: ConnectionStage) {
     let deadline = Instant::now() + WAIT;
     while gw.stage().await != stage {
-        assert!(Instant::now() < deadline, "stage stuck at {:?}, wanted {stage:?}", gw.stage().await);
+        assert!(
+            Instant::now() < deadline,
+            "stage stuck at {:?}, wanted {stage:?}",
+            gw.stage().await
+        );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
@@ -180,7 +207,10 @@ async fn hello_is_answered_with_identify() {
     assert_eq!(identify["d"]["properties"]["client_build_number"], 1);
     assert_eq!(gw.stage().await, ConnectionStage::Identifying);
     // G-3: HELLO is answered at once, not after a fixed pause.
-    assert!(waited < Duration::from_millis(250), "IDENTIFY after {waited:?}");
+    assert!(
+        waited < Duration::from_millis(250),
+        "IDENTIFY after {waited:?}"
+    );
 
     gw.disconnect().await;
 }
@@ -191,9 +221,17 @@ async fn ready_and_dispatches_reach_subscribers() {
     let (mut gw, mut rx, mut conn) = start(&server).await;
 
     conn.identify_and_ready("sess-1", "ws://127.0.0.1:9").await;
-    conn.dispatch("MESSAGE_CREATE", 2, json!({ "id": "10", "content": "hi" })).await;
+    conn.dispatch("MESSAGE_CREATE", 2, json!({ "id": "10", "content": "hi" }))
+        .await;
 
-    let order: Vec<String> = [next_event(&mut rx).await, next_event(&mut rx).await, next_event(&mut rx).await].into_iter().map(|e| e.event_type).collect();
+    let order: Vec<String> = [
+        next_event(&mut rx).await,
+        next_event(&mut rx).await,
+        next_event(&mut rx).await,
+    ]
+    .into_iter()
+    .map(|e| e.event_type)
+    .collect();
     assert_eq!(order, ["READY", "CACHE_READY", "MESSAGE_CREATE"]);
     wait_for_stage(&gw, ConnectionStage::Connected).await;
     assert_eq!(gw.reconnection_type().await, ReconnectType::Resume);
@@ -206,7 +244,8 @@ async fn op_7_reconnects_and_resumes() {
     let server = Server::bind().await;
     let resume_server = Server::bind().await;
     let (mut gw, _rx, mut conn) = start(&server).await;
-    conn.identify_and_ready("sess-1", &resume_server.bare_url()).await;
+    conn.identify_and_ready("sess-1", &resume_server.bare_url())
+        .await;
     conn.dispatch("MESSAGE_CREATE", 5, json!({})).await;
 
     conn.send(json!({ "op": 7, "d": null })).await;
@@ -234,7 +273,10 @@ async fn session_ending_close_reconnects_with_identify() {
 
     // The session is gone, so the reconnect returns to the base URL, after
     // the 1-5 s IDENTIFY window.
-    let mut conn = server.accept_within(Duration::from_secs(8)).await.expect("no re-IDENTIFY");
+    let mut conn = server
+        .accept_within(Duration::from_secs(8))
+        .await
+        .expect("no re-IDENTIFY");
     conn.hello(QUIET_INTERVAL_MS).await;
     let identify = conn.recv_op(2).await;
     assert_eq!(identify["d"]["token"], TOKEN);
@@ -251,7 +293,13 @@ async fn fatal_close_stops_the_supervisor() {
 
     conn.close(4004).await;
 
-    assert!(server.accept_within(Duration::from_millis(1_500)).await.is_none(), "reconnected after 4004");
+    assert!(
+        server
+            .accept_within(Duration::from_millis(1_500))
+            .await
+            .is_none(),
+        "reconnected after 4004"
+    );
     assert_eq!(gw.stage().await, ConnectionStage::Disconnected);
     // G-6: a stopped supervisor no longer reports a connection.
     assert!(!gw.is_connected().await);
@@ -274,7 +322,11 @@ async fn unacknowledged_heartbeat_cuts_the_connection() {
     let gave_up = Instant::now();
     let mut conn = resume_server.accept().await;
     // Next heartbeat tick (<= 200 ms), then the ladder floor (1 s).
-    assert!(gave_up.elapsed() < Duration::from_millis(2_000), "reconnected after {:?}", gave_up.elapsed());
+    assert!(
+        gave_up.elapsed() < Duration::from_millis(2_000),
+        "reconnected after {:?}",
+        gave_up.elapsed()
+    );
     conn.hello(QUIET_INTERVAL_MS).await;
     assert_eq!(conn.recv_op(6).await["d"]["session_id"], "sess-1");
 
@@ -286,7 +338,8 @@ async fn resumable_op_9_reconnects_on_the_fast_floor() {
     let server = Server::bind().await;
     let resume_server = Server::bind().await;
     let (mut gw, _rx, mut conn) = start(&server).await;
-    conn.identify_and_ready("sess-1", &resume_server.bare_url()).await;
+    conn.identify_and_ready("sess-1", &resume_server.bare_url())
+        .await;
     wait_for_stage(&gw, ConnectionStage::Connected).await;
 
     conn.send(json!({ "op": 9, "d": true })).await;
@@ -294,7 +347,11 @@ async fn resumable_op_9_reconnects_on_the_fast_floor() {
 
     // G-4: no 1-5 s wait on the reader; the RESUME follows the 250 ms floor.
     let mut conn = resume_server.accept().await;
-    assert!(sent.elapsed() < Duration::from_millis(900), "reconnected after {:?}", sent.elapsed());
+    assert!(
+        sent.elapsed() < Duration::from_millis(900),
+        "reconnected after {:?}",
+        sent.elapsed()
+    );
     conn.hello(QUIET_INTERVAL_MS).await;
     assert_eq!(conn.recv_op(6).await["d"]["session_id"], "sess-1");
 
@@ -313,9 +370,15 @@ async fn non_resumable_op_9_identifies_after_the_jittered_wait() {
 
     // The jittered window runs to 5 s, as long as the default accept wait,
     // so this accept allows for the whole window.
-    let mut conn = server.accept_within(Duration::from_secs(8)).await.expect("no re-IDENTIFY");
+    let mut conn = server
+        .accept_within(Duration::from_secs(8))
+        .await
+        .expect("no re-IDENTIFY");
     let waited = sent.elapsed();
-    assert!(waited >= Duration::from_millis(950) && waited < Duration::from_millis(5_500), "re-identified after {waited:?}");
+    assert!(
+        waited >= Duration::from_millis(950) && waited < Duration::from_millis(5_500),
+        "re-identified after {waited:?}"
+    );
     conn.hello(QUIET_INTERVAL_MS).await;
     conn.recv_op(2).await;
 
@@ -333,7 +396,11 @@ async fn heartbeat_request_is_answered_without_waiting_for_the_interval() {
     conn.send(json!({ "op": 1, "d": null })).await;
     let asked = Instant::now();
     let beat = conn.recv_op(1).await;
-    assert!(asked.elapsed() < Duration::from_millis(500), "heartbeat after {:?}", asked.elapsed());
+    assert!(
+        asked.elapsed() < Duration::from_millis(500),
+        "heartbeat after {:?}",
+        asked.elapsed()
+    );
     assert_eq!(beat["d"], 9);
 
     gw.disconnect().await;
@@ -342,7 +409,10 @@ async fn heartbeat_request_is_answered_without_waiting_for_the_interval() {
 // ── Phase 3: caller hooks and the ordered event stream ──
 
 async fn next_gateway_event(events: &mut GatewayEvents) -> GatewayEvent {
-    timeout(WAIT, events.recv()).await.expect("no gateway event within the wait").expect("event stream closed")
+    timeout(WAIT, events.recv())
+        .await
+        .expect("no gateway event within the wait")
+        .expect("event stream closed")
 }
 
 /// The next status event, skipping frames and lag reports.
@@ -364,25 +434,77 @@ async fn frames_stream_reports_every_frame_and_each_status_change() {
     let server = Server::bind().await;
     let (mut gw, _rx) = gateway(&server.url);
     let mut events = gw.frames(FrameBuffer::Unbounded).unwrap();
-    assert!(gw.frames(FrameBuffer::Unbounded).is_none(), "the receiver is handed out once");
+    assert!(
+        gw.frames(FrameBuffer::Unbounded).is_none(),
+        "the receiver is handed out once"
+    );
     let (connected, mut conn) = tokio::join!(gw.connect(), server.accept());
     connected.unwrap();
 
     conn.identify_and_ready("sess-1", "ws://127.0.0.1:9").await;
-    conn.dispatch("MESSAGE_CREATE", 2, json!({ "content": "hi" })).await;
+    conn.dispatch("MESSAGE_CREATE", 2, json!({ "content": "hi" }))
+        .await;
 
-    assert_eq!(next_gateway_event(&mut events).await, GatewayEvent::Status { status: GatewayStatus::Connecting, detail: None });
-    let GatewayEvent::Frame { op: 10, s: None, t: None, raw } = next_gateway_event(&mut events).await else { panic!("expected HELLO") };
-    assert_eq!(serde_json::from_str::<Value>(&raw).unwrap()["d"]["heartbeat_interval"], QUIET_INTERVAL_MS);
-    let GatewayEvent::Frame { op: 0, s: Some(1), t: Some(t), .. } = next_gateway_event(&mut events).await else { panic!("expected READY") };
+    assert_eq!(
+        next_gateway_event(&mut events).await,
+        GatewayEvent::Status {
+            status: GatewayStatus::Connecting,
+            detail: None
+        }
+    );
+    let GatewayEvent::Frame {
+        op: 10,
+        s: None,
+        t: None,
+        raw,
+    } = next_gateway_event(&mut events).await
+    else {
+        panic!("expected HELLO")
+    };
+    assert_eq!(
+        serde_json::from_str::<Value>(&raw).unwrap()["d"]["heartbeat_interval"],
+        QUIET_INTERVAL_MS
+    );
+    let GatewayEvent::Frame {
+        op: 0,
+        s: Some(1),
+        t: Some(t),
+        ..
+    } = next_gateway_event(&mut events).await
+    else {
+        panic!("expected READY")
+    };
     assert_eq!(t, "READY");
-    assert_eq!(next_gateway_event(&mut events).await, GatewayEvent::Status { status: GatewayStatus::Live, detail: None });
-    let GatewayEvent::Frame { s: Some(2), raw, .. } = next_gateway_event(&mut events).await else { panic!("expected MESSAGE_CREATE") };
-    assert!(raw.contains("\"content\":\"hi\""), "raw frame is passed through: {raw}");
+    assert_eq!(
+        next_gateway_event(&mut events).await,
+        GatewayEvent::Status {
+            status: GatewayStatus::Live,
+            detail: None
+        }
+    );
+    let GatewayEvent::Frame {
+        s: Some(2), raw, ..
+    } = next_gateway_event(&mut events).await
+    else {
+        panic!("expected MESSAGE_CREATE")
+    };
+    assert!(
+        raw.contains("\"content\":\"hi\""),
+        "raw frame is passed through: {raw}"
+    );
 
     gw.disconnect().await;
-    assert_eq!(next_gateway_event(&mut events).await, GatewayEvent::Status { status: GatewayStatus::Stopped, detail: Some("shutdown".to_string()) });
-    assert!(timeout(WAIT, events.recv()).await.unwrap().is_none(), "the stream closes after Stopped");
+    assert_eq!(
+        next_gateway_event(&mut events).await,
+        GatewayEvent::Status {
+            status: GatewayStatus::Stopped,
+            detail: Some("shutdown".to_string())
+        }
+    );
+    assert!(
+        timeout(WAIT, events.recv()).await.unwrap().is_none(),
+        "the stream closes after Stopped"
+    );
 }
 
 #[tokio::test]
@@ -398,8 +520,20 @@ async fn rejected_token_reports_auth_failed_then_stopped() {
     conn.close(4004).await;
 
     assert_eq!(next_status(&mut events).await.0, GatewayStatus::Connecting);
-    assert_eq!(next_status(&mut events).await, (GatewayStatus::AuthFailed, Some("close 4004: test".to_string())));
-    assert_eq!(next_status(&mut events).await, (GatewayStatus::Stopped, Some("Authentication failed".to_string())));
+    assert_eq!(
+        next_status(&mut events).await,
+        (
+            GatewayStatus::AuthFailed,
+            Some("close 4004: test".to_string())
+        )
+    );
+    assert_eq!(
+        next_status(&mut events).await,
+        (
+            GatewayStatus::Stopped,
+            Some("Authentication failed".to_string())
+        )
+    );
     assert!(timeout(WAIT, events.recv()).await.unwrap().is_none());
     assert!(!gw.is_connected().await, "is_connected agrees with Stopped");
 }
@@ -426,7 +560,13 @@ impl GatewayHooks for Reharvest {
         }
     }
 
-    fn delay(&self, _cause: ReconnectCause, backoff: Duration, _held: bool, _rand: f64) -> (Duration, Duration) {
+    fn delay(
+        &self,
+        _cause: ReconnectCause,
+        backoff: Duration,
+        _held: bool,
+        _rand: f64,
+    ) -> (Duration, Duration) {
         quick_delay(backoff)
     }
 }
@@ -434,7 +574,10 @@ impl GatewayHooks for Reharvest {
 #[tokio::test]
 async fn token_hook_is_asked_before_every_connect_and_4004_can_reharvest() {
     let server = Server::bind().await;
-    let hooks = Arc::new(Reharvest { tokens: Mutex::new(vec!["tok-1", "tok-2"]), invalidated: AtomicUsize::new(0) });
+    let hooks = Arc::new(Reharvest {
+        tokens: Mutex::new(vec!["tok-1", "tok-2"]),
+        invalidated: AtomicUsize::new(0),
+    });
     let (gw, _rx) = gateway(&server.url);
     let mut gw = gw.with_hooks(hooks.clone());
     let mut events = gw.frames(FrameBuffer::Unbounded).unwrap();
@@ -451,7 +594,11 @@ async fn token_hook_is_asked_before_every_connect_and_4004_can_reharvest() {
     assert_eq!(hooks.invalidated.load(Ordering::SeqCst), 1);
     assert_eq!(next_status(&mut events).await.0, GatewayStatus::Connecting);
     assert_eq!(next_status(&mut events).await.0, GatewayStatus::AuthFailed);
-    assert_eq!(next_status(&mut events).await.0, GatewayStatus::Connecting, "AuthFailed is not terminal");
+    assert_eq!(
+        next_status(&mut events).await.0,
+        GatewayStatus::Connecting,
+        "AuthFailed is not terminal"
+    );
 
     gw.disconnect().await;
 }
@@ -460,12 +607,16 @@ async fn token_hook_is_asked_before_every_connect_and_4004_can_reharvest() {
 async fn a_changed_token_identifies_instead_of_resuming() {
     let server = Server::bind().await;
     let resume_server = Server::bind().await;
-    let hooks = Arc::new(Reharvest { tokens: Mutex::new(vec!["tok-1", "tok-2"]), invalidated: AtomicUsize::new(0) });
+    let hooks = Arc::new(Reharvest {
+        tokens: Mutex::new(vec!["tok-1", "tok-2"]),
+        invalidated: AtomicUsize::new(0),
+    });
     let (gw, _rx) = gateway(&server.url);
     let mut gw = gw.with_hooks(hooks);
     let (connected, mut conn) = tokio::join!(gw.connect(), server.accept());
     connected.unwrap();
-    conn.identify_and_ready("sess-1", &resume_server.bare_url()).await;
+    conn.identify_and_ready("sess-1", &resume_server.bare_url())
+        .await;
     wait_for_stage(&gw, ConnectionStage::Connected).await;
 
     conn.send(json!({ "op": 7, "d": null })).await;
@@ -491,16 +642,28 @@ async fn connect_without_a_credential_fails() {
     let server = Server::bind().await;
     let (gw, _rx) = gateway(&server.url);
     let mut gw = gw.with_hooks(Arc::new(NoCredential));
-    assert!(matches!(gw.connect().await, Err(DiscordError::GatewayConnection(_))));
-    assert!(server.accept_within(Duration::from_millis(300)).await.is_none());
+    assert!(matches!(
+        gw.connect().await,
+        Err(DiscordError::GatewayConnection(_))
+    ));
+    assert!(server
+        .accept_within(Duration::from_millis(300))
+        .await
+        .is_none());
 }
 
 /// Sends fms-dash's IDENTIFY shape and stops on any 4000.
 struct LinuxClient;
 
 impl GatewayHooks for LinuxClient {
-    fn identify<'a>(&'a self, token: &'a str, _defaults: &'a IdentifyDefaults) -> BoxFuture<'a, Value> {
-        Box::pin(async move { json!({ "token": token, "capabilities": 0, "properties": { "os": "Linux", "browser": "Chrome" } }) })
+    fn identify<'a>(
+        &'a self,
+        token: &'a str,
+        _defaults: &'a IdentifyDefaults,
+    ) -> BoxFuture<'a, Value> {
+        Box::pin(async move {
+            json!({ "token": token, "capabilities": 0, "properties": { "os": "Linux", "browser": "Chrome" } })
+        })
     }
 
     fn on_close(&self, code: Option<u16>, reason: &str) -> CloseVerdict {
@@ -521,19 +684,37 @@ async fn identify_and_close_hooks_replace_the_defaults() {
     connected.unwrap();
     conn.hello(QUIET_INTERVAL_MS).await;
     let identify = conn.recv_op(2).await;
-    assert_eq!(identify["d"], json!({ "token": TOKEN, "capabilities": 0, "properties": { "os": "Linux", "browser": "Chrome" } }));
+    assert_eq!(
+        identify["d"],
+        json!({ "token": TOKEN, "capabilities": 0, "properties": { "os": "Linux", "browser": "Chrome" } })
+    );
 
     conn.close(4000).await;
 
     assert_eq!(next_status(&mut events).await.0, GatewayStatus::Connecting);
-    assert_eq!(next_status(&mut events).await, (GatewayStatus::Stopped, Some("caller stopped on 4000 (test)".to_string())));
-    assert!(server.accept_within(Duration::from_millis(500)).await.is_none());
+    assert_eq!(
+        next_status(&mut events).await,
+        (
+            GatewayStatus::Stopped,
+            Some("caller stopped on 4000 (test)".to_string())
+        )
+    );
+    assert!(server
+        .accept_within(Duration::from_millis(500))
+        .await
+        .is_none());
 }
 
 struct QuickReconnect;
 
 impl GatewayHooks for QuickReconnect {
-    fn delay(&self, _cause: ReconnectCause, backoff: Duration, _held: bool, _rand: f64) -> (Duration, Duration) {
+    fn delay(
+        &self,
+        _cause: ReconnectCause,
+        backoff: Duration,
+        _held: bool,
+        _rand: f64,
+    ) -> (Duration, Duration) {
         quick_delay(backoff)
     }
 }
@@ -552,7 +733,11 @@ async fn delay_hook_paces_reconnects() {
     conn.close(4009).await;
     let closed = Instant::now();
     let _conn = server.accept().await;
-    assert!(closed.elapsed() < Duration::from_millis(500), "reconnected after {:?}", closed.elapsed());
+    assert!(
+        closed.elapsed() < Duration::from_millis(500),
+        "reconnected after {:?}",
+        closed.elapsed()
+    );
 
     gw.disconnect().await;
 }
@@ -578,17 +763,27 @@ async fn bounded_stream_counts_drops_and_never_stalls_the_reader() {
         conn.recv_op(1).await;
         conn.send(json!({ "op": 11 })).await;
     }
-    assert!(server.accept_within(Duration::from_millis(200)).await.is_none(), "the connection survived");
+    assert!(
+        server
+            .accept_within(Duration::from_millis(200))
+            .await
+            .is_none(),
+        "the connection survived"
+    );
     assert_eq!(gw.stage().await, ConnectionStage::Connected);
 
     let buffered: Vec<GatewayEvent> = std::iter::from_fn(|| events.try_recv().ok()).collect();
     assert_eq!(buffered.len(), 4);
     conn.dispatch("MESSAGE_CREATE", 202, json!({})).await;
-    let GatewayEvent::Lagged { dropped } = next_gateway_event(&mut events).await else { panic!("expected Lagged") };
+    let GatewayEvent::Lagged { dropped } = next_gateway_event(&mut events).await else {
+        panic!("expected Lagged")
+    };
     // The four kept are Connecting, HELLO, READY and Live; the 200
     // dispatches and the 4 ACKs were dropped.
     assert_eq!(dropped, 204);
-    let GatewayEvent::Frame { s: Some(202), .. } = next_gateway_event(&mut events).await else { panic!("expected the next frame") };
+    let GatewayEvent::Frame { s: Some(202), .. } = next_gateway_event(&mut events).await else {
+        panic!("expected the next frame")
+    };
 
     gw.disconnect().await;
 }

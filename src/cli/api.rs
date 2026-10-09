@@ -89,34 +89,38 @@ pub fn validate_emoji(emoji: &str) -> Result<()> {
     if char_count <= 20 && !emoji.contains(':') {
         return Ok(()); // Likely Unicode emoji
     }
-    
+
     // Custom emoji: name:id or a:name:id (animated)
     let parts: Vec<&str> = emoji.split(':').collect();
     match parts.len() {
-        2 => {
+        2
             // Regular custom emoji: name:id
-            if !parts[0].is_empty() {
+            if !parts[0].is_empty() => {
                 parse_snowflake(parts[1])?;
                 return Ok(());
             }
-        }
-        3 if parts[0] == "a" => {
+        3 if parts[0] == "a"
             // Animated custom emoji: a:name:id
-            if !parts[1].is_empty() {
+            && !parts[1].is_empty() => {
                 parse_snowflake(parts[2])?;
                 return Ok(());
             }
-        }
         _ => {}
     }
-    
-    Err(anyhow!("Invalid emoji format: expected Unicode emoji, 'name:id', or 'a:name:id' (animated)"))
+
+    Err(anyhow!(
+        "Invalid emoji format: expected Unicode emoji, 'name:id', or 'a:name:id' (animated)"
+    ))
 }
 
 /// Validate a pagination limit is within reasonable bounds.
 pub fn validate_limit(limit: u32, max: u32) -> Result<u32> {
     if limit > max {
-        tracing::warn!("Limit {} exceeds recommended maximum {}, capping", limit, max);
+        tracing::warn!(
+            "Limit {} exceeds recommended maximum {}, capping",
+            limit,
+            max
+        );
         Ok(max)
     } else {
         Ok(limit)
@@ -574,7 +578,10 @@ impl Api {
     pub async fn get_user_profile(&self, user_id: &str) -> Result<UserProfileDto> {
         let uid = parse_snowflake(user_id)?;
         self.http
-            .get::<UserProfileDto>(Route::GetUserProfile { user_id: uid, guild_id: None })
+            .get::<UserProfileDto>(Route::GetUserProfile {
+                user_id: uid,
+                guild_id: None,
+            })
             .await
     }
 
@@ -585,7 +592,11 @@ impl Api {
             .await
     }
 
-    pub async fn get_guild_audit_logs(&self, guild_id: &str, limit: u8) -> Result<AuditLogResponse> {
+    pub async fn get_guild_audit_logs(
+        &self,
+        guild_id: &str,
+        limit: u8,
+    ) -> Result<AuditLogResponse> {
         self.get_guild_audit_logs_filtered(guild_id, limit, None, None, None, None)
             .await
     }
@@ -797,8 +808,15 @@ impl WriteApi {
         files: &[std::path::PathBuf],
     ) -> Result<serde_json::Value> {
         let dm = self.create_dm(recipient_id).await?;
-        self.send_message_with_files(&dm.id, content, None, files, &[], &MessageOptions::default())
-            .await
+        self.send_message_with_files(
+            &dm.id,
+            content,
+            None,
+            files,
+            &[],
+            &MessageOptions::default(),
+        )
+        .await
     }
 
     /// Build a `channels/{id}/messages` multipart request from an already-built
@@ -868,7 +886,10 @@ impl WriteApi {
             serde_json::to_string(&body).map_err(|e| anyhow!(e.to_string()))?,
         );
         self.raw()
-            .post_raw_multipart::<serde_json::Value>(format!("channels/{}/messages", channel_id), form)
+            .post_raw_multipart::<serde_json::Value>(
+                format!("channels/{}/messages", channel_id),
+                form,
+            )
             .await
             .map_err(|e| anyhow!(e.to_string()))
     }

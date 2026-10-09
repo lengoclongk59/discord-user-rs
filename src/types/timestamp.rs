@@ -69,7 +69,10 @@ pub struct FormattedTimestamp {
 impl FormattedTimestamp {
     /// Create from a Unix second timestamp with an explicit style.
     pub fn new(unix: i64, style: TimestampStyle) -> Self {
-        Self { unix, style: Some(style) }
+        Self {
+            unix,
+            style: Some(style),
+        }
     }
 
     /// Create from a Unix second timestamp using Discord's default style

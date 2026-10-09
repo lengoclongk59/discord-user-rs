@@ -174,12 +174,7 @@ impl WriteApi {
 
     /// GET guilds/{id}/members/search?query=&limit= — search members by
     /// username/nickname prefix. Returns an array of member objects.
-    pub async fn member_search(
-        &self,
-        guild_id: &str,
-        query: &str,
-        limit: u32,
-    ) -> Result<Value> {
+    pub async fn member_search(&self, guild_id: &str, query: &str, limit: u32) -> Result<Value> {
         let gid = crate::cli::api::parse_snowflake(guild_id)?;
         self.raw()
             .get::<Value>(Route::GetGuildMembersByQuery {

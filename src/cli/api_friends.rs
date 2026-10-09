@@ -13,7 +13,10 @@ impl WriteApi {
             .parse()
             .map_err(|_| anyhow!("invalid user id: {}", user_id))?;
         self.raw()
-            .put_optional::<serde_json::Value, _>(Route::AddRelationship { user_id: uid }, json!({}))
+            .put_optional::<serde_json::Value, _>(
+                Route::AddRelationship { user_id: uid },
+                json!({}),
+            )
             .await
             .map(|_| ())
             .map_err(|e| anyhow!(e.to_string()))

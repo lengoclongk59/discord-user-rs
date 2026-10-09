@@ -92,7 +92,10 @@ pub async fn dispatch(ctx: &Ctx, cmd: FriendCmd) -> Result<()> {
             if ctx.json {
                 output::print_json(&serde_json::json!({ "removed": user }));
             } else {
-                output::success(&format!("Removed friend / cancelled request for user {}", user));
+                output::success(&format!(
+                    "Removed friend / cancelled request for user {}",
+                    user
+                ));
             }
         }
 

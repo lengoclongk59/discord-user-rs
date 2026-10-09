@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::types::user::User;
+use serde::{Deserialize, Serialize};
 
 /// Partial application object included in the Ready event.
 /// Contains only `id` and `flags` as specified by the Discord API.

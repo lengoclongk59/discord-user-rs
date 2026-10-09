@@ -36,7 +36,12 @@ pub async fn run(ctx: &Ctx, guild: &str) -> Result<()> {
                     e.id.clone(),
                     e.name.clone(),
                     status_name(e.status).to_string(),
-                    e.scheduled_start_time.as_deref().unwrap_or("").chars().take(16).collect(),
+                    e.scheduled_start_time
+                        .as_deref()
+                        .unwrap_or("")
+                        .chars()
+                        .take(16)
+                        .collect(),
                     e.user_count.map(|c| c.to_string()).unwrap_or_default(),
                 ]
             })

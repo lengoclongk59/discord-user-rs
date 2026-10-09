@@ -121,7 +121,9 @@ impl WriteApi {
             body.insert("show_activity".into(), json!(s));
         }
         if body.is_empty() {
-            return Err(anyhow!("nothing to change: pass --visible and/or --show-activity"));
+            return Err(anyhow!(
+                "nothing to change: pass --visible and/or --show-activity"
+            ));
         }
         self.raw()
             .patch::<Value, _>(
@@ -147,9 +149,7 @@ impl WriteApi {
     pub async fn get_note(&self, user_id: &str) -> Result<Value> {
         crate::cli::api::parse_snowflake(user_id)?;
         self.raw()
-            .get::<Value>(Route::Custom(
-                format!("users/@me/notes/{}", user_id).into(),
-            ))
+            .get::<Value>(Route::Custom(format!("users/@me/notes/{}", user_id).into()))
             .await
             .map_err(|e| anyhow!(e.to_string()))
     }

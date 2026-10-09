@@ -69,7 +69,10 @@ impl ActivityData {
         Self::Playing { name: name.into() }
     }
     pub fn streaming(name: impl Into<String>, url: impl Into<String>) -> Self {
-        Self::Streaming { name: name.into(), url: url.into() }
+        Self::Streaming {
+            name: name.into(),
+            url: url.into(),
+        }
     }
     pub fn listening(name: impl Into<String>) -> Self {
         Self::Listening { name: name.into() }
@@ -198,11 +201,15 @@ pub trait StatusOps: DiscordContext {
         // was stale and the patch was discarded).
         let raw: RawSettingsProtoResponse = self
             .http()
-            .patch(Route::SettingsProto { version: 1 }, json!({ "settings": encoded }))
+            .patch(
+                Route::SettingsProto { version: 1 },
+                json!({ "settings": encoded }),
+            )
             .await?;
 
-        let settings = PreloadedUserSettings::from_base64(&raw.settings)
-            .map_err(|e| DiscordError::Other(format!("failed to decode settings-proto response: {e}")))?;
+        let settings = PreloadedUserSettings::from_base64(&raw.settings).map_err(|e| {
+            DiscordError::Other(format!("failed to decode settings-proto response: {e}"))
+        })?;
 
         Ok(SettingsProtoResponse {
             out_of_date: raw.out_of_date,
@@ -253,7 +260,10 @@ pub trait StatusOps: DiscordContext {
                     // unicode emoji carried in `name`.
                     let parts: Vec<&str> = e.split(':').collect();
                     if parts.len() >= 2 && parts[1].chars().all(|c| c.is_ascii_digit()) {
-                        let animated = parts.get(2).map(|a| *a == "1" || a.eq_ignore_ascii_case("true")).unwrap_or(false);
+                        let animated = parts
+                            .get(2)
+                            .map(|a| *a == "1" || a.eq_ignore_ascii_case("true"))
+                            .unwrap_or(false);
                         json!({ "name": parts[0], "id": parts[1], "animated": animated })
                     } else {
                         json!({ "name": e })

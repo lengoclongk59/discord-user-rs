@@ -200,7 +200,13 @@ impl ConnectionStage {
     /// Check if the stage is currently connecting (any state between
     /// Disconnected and Connected)
     pub fn is_connecting(&self) -> bool {
-        matches!(self, ConnectionStage::Connecting | ConnectionStage::Handshake | ConnectionStage::Identifying | ConnectionStage::Resuming)
+        matches!(
+            self,
+            ConnectionStage::Connecting
+                | ConnectionStage::Handshake
+                | ConnectionStage::Identifying
+                | ConnectionStage::Resuming
+        )
     }
 }
 
@@ -385,14 +391,32 @@ impl Permissions {
     /// ATTACH_FILES, ADD_REACTIONS, USE_EXTERNAL_EMOJIS,
     /// USE_APPLICATION_COMMANDS, SEND_MESSAGES_IN_THREADS.
     pub const fn preset_text() -> Self {
-        Self::from_bits_truncate(Self::VIEW_CHANNEL.bits() | Self::READ_MESSAGE_HISTORY.bits() | Self::SEND_MESSAGES.bits() | Self::EMBED_LINKS.bits() | Self::ATTACH_FILES.bits() | Self::ADD_REACTIONS.bits() | Self::USE_EXTERNAL_EMOJIS.bits() | Self::USE_APPLICATION_COMMANDS.bits() | Self::SEND_MESSAGES_IN_THREADS.bits())
+        Self::from_bits_truncate(
+            Self::VIEW_CHANNEL.bits()
+                | Self::READ_MESSAGE_HISTORY.bits()
+                | Self::SEND_MESSAGES.bits()
+                | Self::EMBED_LINKS.bits()
+                | Self::ATTACH_FILES.bits()
+                | Self::ADD_REACTIONS.bits()
+                | Self::USE_EXTERNAL_EMOJIS.bits()
+                | Self::USE_APPLICATION_COMMANDS.bits()
+                | Self::SEND_MESSAGES_IN_THREADS.bits(),
+        )
     }
 
     /// Permissions that a typical voice-channel member needs:
     /// VIEW_CHANNEL, CONNECT, SPEAK, STREAM, USE_VAD,
     /// USE_EMBEDDED_ACTIVITIES, SEND_VOICE_MESSAGES.
     pub const fn preset_voice() -> Self {
-        Self::from_bits_truncate(Self::VIEW_CHANNEL.bits() | Self::CONNECT.bits() | Self::SPEAK.bits() | Self::STREAM.bits() | Self::USE_VAD.bits() | Self::USE_EMBEDDED_ACTIVITIES.bits() | Self::SEND_VOICE_MESSAGES.bits())
+        Self::from_bits_truncate(
+            Self::VIEW_CHANNEL.bits()
+                | Self::CONNECT.bits()
+                | Self::SPEAK.bits()
+                | Self::STREAM.bits()
+                | Self::USE_VAD.bits()
+                | Self::USE_EMBEDDED_ACTIVITIES.bits()
+                | Self::SEND_VOICE_MESSAGES.bits(),
+        )
     }
 
     /// Full moderation permissions (non-administrator):
@@ -400,7 +424,17 @@ impl Permissions {
     /// MODERATE_MEMBERS, VIEW_AUDIT_LOG, MUTE_MEMBERS, DEAFEN_MEMBERS,
     /// MOVE_MEMBERS.
     pub const fn preset_moderation() -> Self {
-        Self::from_bits_truncate(Self::KICK_MEMBERS.bits() | Self::BAN_MEMBERS.bits() | Self::MANAGE_MESSAGES.bits() | Self::MANAGE_NICKNAMES.bits() | Self::MODERATE_MEMBERS.bits() | Self::VIEW_AUDIT_LOG.bits() | Self::MUTE_MEMBERS.bits() | Self::DEAFEN_MEMBERS.bits() | Self::MOVE_MEMBERS.bits())
+        Self::from_bits_truncate(
+            Self::KICK_MEMBERS.bits()
+                | Self::BAN_MEMBERS.bits()
+                | Self::MANAGE_MESSAGES.bits()
+                | Self::MANAGE_NICKNAMES.bits()
+                | Self::MODERATE_MEMBERS.bits()
+                | Self::VIEW_AUDIT_LOG.bits()
+                | Self::MUTE_MEMBERS.bits()
+                | Self::DEAFEN_MEMBERS.bits()
+                | Self::MOVE_MEMBERS.bits(),
+        )
     }
 
     /// Full administrator equivalent (all bits set via ADMINISTRATOR flag
@@ -411,7 +445,9 @@ impl Permissions {
 
     /// Combined text + voice for a regular member.
     pub const fn preset_general_member() -> Self {
-        Self::from_bits_truncate(Self::preset_text().bits() | Self::preset_voice().bits() | Self::CHANGE_NICKNAME.bits())
+        Self::from_bits_truncate(
+            Self::preset_text().bits() | Self::preset_voice().bits() | Self::CHANGE_NICKNAME.bits(),
+        )
     }
 }
 

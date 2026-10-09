@@ -12,12 +12,7 @@ use std::collections::HashMap;
 
 use serde_json::{json, Value};
 
-use crate::{
-    context::DiscordContext,
-    error::Result,
-    route::Route,
-    types::*,
-};
+use crate::{context::DiscordContext, error::Result, route::Route, types::*};
 
 impl<T: DiscordContext + Send + Sync> RelationshipOps for T {}
 
@@ -42,7 +37,14 @@ pub trait RelationshipOps: DiscordContext {
     /// Returns [`DiscordError::Http`] on HTTP failure.
     async fn add_relationship(&self, user_id: &UserId, type_: RelationshipType) -> Result<()> {
         let payload = json!({ "type": type_ as u8 });
-        self.http().put(Route::AddRelationship { user_id: user_id.get() }, payload).await
+        self.http()
+            .put(
+                Route::AddRelationship {
+                    user_id: user_id.get(),
+                },
+                payload,
+            )
+            .await
     }
 
     /// Remove a relationship with a user (unfriend, unblock, or cancel a
@@ -51,7 +53,11 @@ pub trait RelationshipOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
     async fn remove_relationship(&self, user_id: &UserId) -> Result<()> {
-        self.http().delete(Route::RemoveRelationship { user_id: user_id.get() }).await
+        self.http()
+            .delete(Route::RemoveRelationship {
+                user_id: user_id.get(),
+            })
+            .await
     }
 
     /// Send a friend request by username (and optional discriminator for legacy
@@ -86,7 +92,11 @@ pub trait RelationshipOps: DiscordContext {
     /// Returns [`DiscordError::Http`] on HTTP failure or
     /// [`DiscordError::UnexpectedStatusCode`] on non-2xx responses.
     async fn get_user(&self, user_id: &UserId) -> Result<User> {
-        self.http().get(Route::GetUser { user_id: user_id.get() }).await
+        self.http()
+            .get(Route::GetUser {
+                user_id: user_id.get(),
+            })
+            .await
     }
 
     /// Fetch the current user's guild member object for a specific guild.
@@ -99,7 +109,11 @@ pub trait RelationshipOps: DiscordContext {
     /// Returns [`DiscordError::Http`] on HTTP failure or
     /// [`DiscordError::UnexpectedStatusCode`] on non-2xx responses.
     async fn get_current_user_guild_member(&self, guild_id: &GuildId) -> Result<Member> {
-        self.http().get(Route::CurrentUserGuildMember { guild_id: guild_id.get() }).await
+        self.http()
+            .get(Route::CurrentUserGuildMember {
+                guild_id: guild_id.get(),
+            })
+            .await
     }
 
     /// Create a Group DM channel from OAuth2 access tokens.
@@ -111,7 +125,11 @@ pub trait RelationshipOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn create_group_dm(&self, access_tokens: Vec<String>, nicks: HashMap<String, String>) -> Result<Channel> {
+    async fn create_group_dm(
+        &self,
+        access_tokens: Vec<String>,
+        nicks: HashMap<String, String>,
+    ) -> Result<Channel> {
         let payload = json!({
             "access_tokens": access_tokens,
             "nicks": nicks,
@@ -145,8 +163,15 @@ pub trait RelationshipOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure or
     /// [`DiscordError::UnexpectedStatusCode`] on non-2xx responses.
-    async fn get_current_user_application_role_connection(&self, application_id: &ApplicationId) -> Result<Value> {
-        self.http().get(Route::ApplicationRoleConnection { application_id: application_id.get() }).await
+    async fn get_current_user_application_role_connection(
+        &self,
+        application_id: &ApplicationId,
+    ) -> Result<Value> {
+        self.http()
+            .get(Route::ApplicationRoleConnection {
+                application_id: application_id.get(),
+            })
+            .await
     }
 
     /// Update the current user's application role connection metadata for a
@@ -177,6 +202,13 @@ pub trait RelationshipOps: DiscordContext {
         body.insert("metadata".to_string(), json!(metadata));
         let payload = Value::Object(body);
 
-        self.http().put(Route::ApplicationRoleConnection { application_id: application_id.get() }, payload).await
+        self.http()
+            .put(
+                Route::ApplicationRoleConnection {
+                    application_id: application_id.get(),
+                },
+                payload,
+            )
+            .await
     }
 }

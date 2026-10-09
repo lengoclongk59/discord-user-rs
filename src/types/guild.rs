@@ -204,7 +204,10 @@ impl Guild {
     pub fn icon_url(&self, size: u32) -> Option<String> {
         self.icon.as_ref().map(|hash| {
             let ext = if hash.starts_with("a_") { "gif" } else { "png" };
-            format!("https://cdn.discordapp.com/icons/{}/{}.{}?size={}", self.id, hash, ext, size)
+            format!(
+                "https://cdn.discordapp.com/icons/{}/{}.{}?size={}",
+                self.id, hash, ext, size
+            )
         })
     }
 
@@ -212,7 +215,12 @@ impl Guild {
     ///
     /// Mirrors serenity's `Guild::splash_url()`.
     pub fn splash_url(&self) -> Option<String> {
-        self.splash.as_ref().map(|hash| format!("https://cdn.discordapp.com/splashes/{}/{}.png?size=512", self.id, hash))
+        self.splash.as_ref().map(|hash| {
+            format!(
+                "https://cdn.discordapp.com/splashes/{}/{}.png?size=512",
+                self.id, hash
+            )
+        })
     }
 
     /// Get guild banner URL, if set.
@@ -220,8 +228,15 @@ impl Guild {
     /// Mirrors serenity's `Guild::banner_url()`.
     pub fn banner_url(&self) -> Option<String> {
         self.banner.as_ref().map(|hash| {
-            let ext = if hash.starts_with("a_") { "gif" } else { "webp" };
-            format!("https://cdn.discordapp.com/banners/{}/{}.{}?size=512", self.id, hash, ext)
+            let ext = if hash.starts_with("a_") {
+                "gif"
+            } else {
+                "webp"
+            };
+            format!(
+                "https://cdn.discordapp.com/banners/{}/{}.{}?size=512",
+                self.id, hash, ext
+            )
         })
     }
 
@@ -240,7 +255,9 @@ impl Guild {
     /// Mirrors serenity's `Guild::channel_id_from_name()`.
     pub fn channel_by_name(&self, name: &str) -> Option<&Channel> {
         let lower = name.to_lowercase();
-        self.channels.iter().find(|c| c.name.as_deref().map(|n| n.to_lowercase()) == Some(lower.as_str().to_string()))
+        self.channels.iter().find(|c| {
+            c.name.as_deref().map(|n| n.to_lowercase()) == Some(lower.as_str().to_string())
+        })
     }
 
     /// Extract the guild's creation timestamp from its snowflake ID.
@@ -483,7 +500,10 @@ impl GuildEmoji {
     /// Mirrors serenity's `Emoji::url()`.
     pub fn url(&self) -> String {
         let ext = if self.animated { "gif" } else { "webp" };
-        format!("https://cdn.discordapp.com/emojis/{}.{}?size=128", self.id, ext)
+        format!(
+            "https://cdn.discordapp.com/emojis/{}.{}?size=128",
+            self.id, ext
+        )
     }
 
     /// Format as a reaction or message string.

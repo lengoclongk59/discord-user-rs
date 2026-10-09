@@ -91,7 +91,11 @@ impl CommandFramework {
     where
         F: Fn(CommandContext) + Send + Sync + 'static,
     {
-        let key = if self.case_insensitive { name.to_lowercase() } else { name.to_string() };
+        let key = if self.case_insensitive {
+            name.to_lowercase()
+        } else {
+            name.to_string()
+        };
         self.commands.insert(key, Arc::new(handler));
     }
 
@@ -146,9 +150,17 @@ impl CommandFramework {
             _ => return false,
         };
         let args_str = parts.next().unwrap_or("").trim();
-        let args: Vec<String> = if args_str.is_empty() { vec![] } else { args_str.split_whitespace().map(str::to_string).collect() };
+        let args: Vec<String> = if args_str.is_empty() {
+            vec![]
+        } else {
+            args_str.split_whitespace().map(str::to_string).collect()
+        };
 
-        let key = if self.case_insensitive { cmd_raw.to_lowercase() } else { cmd_raw.to_string() };
+        let key = if self.case_insensitive {
+            cmd_raw.to_lowercase()
+        } else {
+            cmd_raw.to_string()
+        };
 
         let ctx = CommandContext {
             command: key.clone(),

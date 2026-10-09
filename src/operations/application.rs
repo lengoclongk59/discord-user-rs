@@ -7,7 +7,9 @@ use std::borrow::Cow;
 
 use serde_json::Value;
 
-use crate::{context::DiscordContext, error::Result, route::Route, types::application::Application};
+use crate::{
+    context::DiscordContext, error::Result, route::Route, types::application::Application,
+};
 
 impl<T: DiscordContext + Send + Sync> ApplicationOps for T {}
 
@@ -48,7 +50,11 @@ pub trait ApplicationOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure or if the activity
     /// instance has already terminated.
-    async fn get_application_activity_instance(&self, application_id: u64, instance_id: &str) -> Result<Value> {
+    async fn get_application_activity_instance(
+        &self,
+        application_id: u64,
+        instance_id: &str,
+    ) -> Result<Value> {
         self.http()
             .get(Route::ApplicationActivityInstance {
                 application_id,

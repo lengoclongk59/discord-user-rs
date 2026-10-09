@@ -75,7 +75,10 @@ pub async fn dispatch(ctx: &Ctx, cmd: NotifyCmd) -> Result<()> {
             if ctx.json {
                 output::print_json(&result);
             } else {
-                output::success(&format!("Updated notification settings for guild {}", guild));
+                output::success(&format!(
+                    "Updated notification settings for guild {}",
+                    guild
+                ));
             }
         }
 
@@ -92,7 +95,10 @@ pub async fn dispatch(ctx: &Ctx, cmd: NotifyCmd) -> Result<()> {
             if ctx.json {
                 output::print_json(&result);
             } else {
-                output::success(&format!("Updated notification override for channel {}", channel));
+                output::success(&format!(
+                    "Updated notification override for channel {}",
+                    channel
+                ));
             }
         }
 
@@ -105,7 +111,10 @@ pub async fn dispatch(ctx: &Ctx, cmd: NotifyCmd) -> Result<()> {
                     "acked": true,
                 }));
             } else {
-                output::success(&format!("Marked channel {} read up to message {}", channel, message));
+                output::success(&format!(
+                    "Marked channel {} read up to message {}",
+                    channel, message
+                ));
             }
         }
 

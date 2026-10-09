@@ -71,7 +71,9 @@ pub struct TypeMap {
 impl TypeMap {
     /// Create an empty `TypeMap`.
     pub fn new() -> Self {
-        Self { map: HashMap::new() }
+        Self {
+            map: HashMap::new(),
+        }
     }
 
     /// Insert a value for key `K`, replacing any existing value.
@@ -81,18 +83,24 @@ impl TypeMap {
 
     /// Get a shared reference to the value for key `K`, or `None` if not set.
     pub fn get<K: TypeMapKey>(&self) -> Option<&K::Value> {
-        self.map.get(&TypeId::of::<K>()).and_then(|b| b.downcast_ref::<K::Value>())
+        self.map
+            .get(&TypeId::of::<K>())
+            .and_then(|b| b.downcast_ref::<K::Value>())
     }
 
     /// Get an exclusive reference to the value for key `K`, or `None` if not
     /// set.
     pub fn get_mut<K: TypeMapKey>(&mut self) -> Option<&mut K::Value> {
-        self.map.get_mut(&TypeId::of::<K>()).and_then(|b| b.downcast_mut::<K::Value>())
+        self.map
+            .get_mut(&TypeId::of::<K>())
+            .and_then(|b| b.downcast_mut::<K::Value>())
     }
 
     /// Remove the value for key `K`, returning it if it was present.
     pub fn remove<K: TypeMapKey>(&mut self) -> Option<K::Value> {
-        self.map.remove(&TypeId::of::<K>()).and_then(|b| b.downcast::<K::Value>().ok().map(|v| *v))
+        self.map
+            .remove(&TypeId::of::<K>())
+            .and_then(|b| b.downcast::<K::Value>().ok().map(|v| *v))
     }
 
     /// Returns `true` if a value has been inserted for key `K`.

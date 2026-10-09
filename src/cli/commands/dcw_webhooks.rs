@@ -73,7 +73,11 @@ pub async fn dispatch(ctx: &Ctx, cmd: WebhookCmd) -> Result<()> {
             }
         }
 
-        WebhookCmd::Edit { webhook_id, name, channel } => {
+        WebhookCmd::Edit {
+            webhook_id,
+            name,
+            channel,
+        } => {
             let mut body = serde_json::Map::new();
             if let Some(n) = name {
                 body.insert("name".into(), serde_json::json!(n));
@@ -85,7 +89,9 @@ pub async fn dispatch(ctx: &Ctx, cmd: WebhookCmd) -> Result<()> {
                 output::warn("No fields provided — nothing to edit.");
                 return Ok(());
             }
-            let result = api.webhook_edit(&webhook_id, serde_json::Value::Object(body)).await?;
+            let result = api
+                .webhook_edit(&webhook_id, serde_json::Value::Object(body))
+                .await?;
             if ctx.json {
                 output::print_json(&result);
             } else {
@@ -113,7 +119,11 @@ pub async fn dispatch(ctx: &Ctx, cmd: WebhookCmd) -> Result<()> {
             }
         }
 
-        WebhookCmd::Execute { webhook_id, token, content } => {
+        WebhookCmd::Execute {
+            webhook_id,
+            token,
+            content,
+        } => {
             api.webhook_execute(&webhook_id, &token, &content).await?;
             if ctx.json {
                 output::print_json(&serde_json::json!({

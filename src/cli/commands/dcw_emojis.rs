@@ -80,7 +80,11 @@ pub async fn dispatch(ctx: &Ctx, cmd: EmojiCmd) -> Result<()> {
             }
         }
 
-        EmojiCmd::Delete { guild, emoji_id, yes } => {
+        EmojiCmd::Delete {
+            guild,
+            emoji_id,
+            yes,
+        } => {
             if !yes {
                 print!(
                     "Delete emoji {} from guild {}? Type 'yes' to confirm: ",
@@ -101,10 +105,7 @@ pub async fn dispatch(ctx: &Ctx, cmd: EmojiCmd) -> Result<()> {
                     "guild_id": guild,
                 }));
             } else {
-                output::success(&format!(
-                    "Deleted emoji {} from guild {}",
-                    emoji_id, guild
-                ));
+                output::success(&format!("Deleted emoji {} from guild {}", emoji_id, guild));
             }
         }
     }

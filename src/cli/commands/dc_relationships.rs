@@ -42,7 +42,10 @@ pub async fn run(ctx: &Ctx) -> Result<()> {
                 ]
             })
             .collect();
-        output::print_table(&["id", "username", "display name", "type", "nickname"], &rows);
+        output::print_table(
+            &["id", "username", "display name", "type", "nickname"],
+            &rows,
+        );
         output::dim(&format!("\n{} relationships", relationships.len()));
     }
     Ok(())

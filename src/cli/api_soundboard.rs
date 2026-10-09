@@ -103,9 +103,7 @@ impl WriteApi {
         crate::cli::api::parse_snowflake(sound_id)?;
         self.raw()
             .patch::<Value, _>(
-                Route::Custom(
-                    format!("guilds/{}/soundboard-sounds/{}", guild_id, sound_id).into(),
-                ),
+                Route::Custom(format!("guilds/{}/soundboard-sounds/{}", guild_id, sound_id).into()),
                 body,
             )
             .await

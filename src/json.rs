@@ -19,7 +19,9 @@
 // ── serde_json backend (default) ─────────────────────────────────────────────
 
 #[cfg(not(feature = "simd_json"))]
-pub use serde_json::{from_str, from_value, to_string, to_string_pretty, to_value, Error, Result, Value};
+pub use serde_json::{
+    from_str, from_value, to_string, to_string_pretty, to_value, Error, Result, Value,
+};
 // ── simd-json backend ─────────────────────────────────────────────────────────
 #[cfg(feature = "simd_json")]
 pub use serde_json::{from_value, to_string, to_string_pretty, to_value, Error, Result, Value};

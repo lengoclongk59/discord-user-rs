@@ -42,7 +42,11 @@ pub fn parse_channel_mention(s: &str) -> Option<ChannelId> {
 /// Parse a custom emoji mention `<:name:id>` or `<a:name:id>` (animated).
 /// Returns `(name, EmojiId, animated)`.
 pub fn parse_emoji(s: &str) -> Option<(String, EmojiId, bool)> {
-    let (animated, inner) = if s.starts_with("<a:") { (true, strip_wrapping(s, "<a:", ">")?) } else { (false, strip_wrapping(s, "<:", ">")?) };
+    let (animated, inner) = if s.starts_with("<a:") {
+        (true, strip_wrapping(s, "<a:", ">")?)
+    } else {
+        (false, strip_wrapping(s, "<:", ">")?)
+    };
     let mut parts = inner.splitn(2, ':');
     let name = parts.next()?.to_string();
     let id: EmojiId = parts.next()?.parse().ok()?;
@@ -57,7 +61,11 @@ pub fn parse_emoji(s: &str) -> Option<(String, EmojiId, bool)> {
 /// - bare `CODE` (alphanumeric, 2–30 chars)
 pub fn parse_invite(s: &str) -> Option<String> {
     let s = s.trim();
-    for prefix in &["https://discord.gg/", "https://discord.com/invite/", "http://discord.gg/"] {
+    for prefix in &[
+        "https://discord.gg/",
+        "https://discord.com/invite/",
+        "http://discord.gg/",
+    ] {
         if let Some(code) = s.strip_prefix(prefix) {
             let code = code.trim_end_matches('/');
             if is_valid_invite_code(code) {
@@ -173,8 +181,14 @@ mod tests {
 
     #[test]
     fn invite_url() {
-        assert_eq!(parse_invite("https://discord.gg/rust"), Some("rust".to_string()));
-        assert_eq!(parse_invite("https://discord.com/invite/rust"), Some("rust".to_string()));
+        assert_eq!(
+            parse_invite("https://discord.gg/rust"),
+            Some("rust".to_string())
+        );
+        assert_eq!(
+            parse_invite("https://discord.com/invite/rust"),
+            Some("rust".to_string())
+        );
         assert_eq!(parse_invite("rust"), Some("rust".to_string()));
     }
 

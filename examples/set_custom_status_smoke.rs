@@ -13,24 +13,32 @@ use discord_user::UserStatus;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token = std::env::var("DISCORD_TOKEN").expect("DISCORD_TOKEN env var not set");
-    let text = std::env::var("STATUS_TEXT").unwrap_or_else(|_| "discord-user-rs smoke test".to_string());
+    let text =
+        std::env::var("STATUS_TEXT").unwrap_or_else(|_| "discord-user-rs smoke test".to_string());
 
     let client = DiscordUser::new(&token);
 
     // Auto-clear the custom status 60s from now so it doesn't linger.
-    let now_ms =
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
     let expires_ms = now_ms + 60_000;
 
     println!("PATCH /users/@me/settings-proto/1");
     println!("  text:       {text:?}");
     println!("  expires_at: {expires_ms} (now + 60s)");
 
-    let resp = client.set_custom_status(UserStatus::Online, Some(&text), Some(expires_ms)).await?;
+    let resp = client
+        .set_custom_status(UserStatus::Online, Some(&text), Some(expires_ms))
+        .await?;
 
     println!("\nResponse:");
     println!("  out_of_date:        {}", resp.out_of_date);
-    println!("  raw_settings (b64): {} bytes", resp.raw_settings_b64.len());
+    println!(
+        "  raw_settings (b64): {} bytes",
+        resp.raw_settings_b64.len()
+    );
 
     let status = resp.settings.status.as_ref().expect("status present");
     println!("  status:             {:?}", status.status);

@@ -82,7 +82,15 @@ impl IdentifyDefaults {
             Some(n) => n,
             None => client_build_number().await,
         };
-        identify_payload(token, self.custom_status, self.capabilities, self.intents, self.large_threshold, self.shard, build_number)
+        identify_payload(
+            token,
+            self.custom_status,
+            self.capabilities,
+            self.intents,
+            self.large_threshold,
+            self.shard,
+            build_number,
+        )
     }
 }
 
@@ -94,7 +102,15 @@ impl IdentifyDefaults {
 /// by the Discord docs (valid range 50–250; clamped here as belt-and-braces).
 // TODO: route `large_threshold` through `DiscordUserBuilder` so callers can
 // tune it without touching `Gateway` directly.
-fn identify_payload(token: &str, status: UserStatus, capabilities: u32, intents: Option<u64>, large_threshold: u16, shard: Option<[u32; 2]>, build_number: u32) -> Value {
+fn identify_payload(
+    token: &str,
+    status: UserStatus,
+    capabilities: u32,
+    intents: Option<u64>,
+    large_threshold: u16,
+    shard: Option<[u32; 2]>,
+    build_number: u32,
+) -> Value {
     let large_threshold = large_threshold.clamp(50, 250);
     let mut data = json!({
         "token": gateway_token(token),
@@ -218,7 +234,11 @@ pub trait GatewayHooks: Send + Sync + 'static {
     /// The IDENTIFY `d` object for `token` (the value returned by
     /// [`Self::token`], prefix included). `defaults` builds the library's
     /// own payload.
-    fn identify<'a>(&'a self, token: &'a str, defaults: &'a IdentifyDefaults) -> BoxFuture<'a, Value> {
+    fn identify<'a>(
+        &'a self,
+        token: &'a str,
+        defaults: &'a IdentifyDefaults,
+    ) -> BoxFuture<'a, Value> {
         Box::pin(defaults.payload(token))
     }
 
@@ -232,7 +252,13 @@ pub trait GatewayHooks: Send + Sync + 'static {
     /// Defaults to [`plan_reconnect`]. The supervisor resets the backoff to
     /// [`BACKOFF_MIN`](super::BACKOFF_MIN) once a connection has had a
     /// heartbeat acknowledged after READY or RESUMED.
-    fn delay(&self, cause: ReconnectCause, backoff: Duration, session_held: bool, rand: f64) -> (Duration, Duration) {
+    fn delay(
+        &self,
+        cause: ReconnectCause,
+        backoff: Duration,
+        session_held: bool,
+        rand: f64,
+    ) -> (Duration, Duration) {
         plan_reconnect(cause, backoff, session_held, rand)
     }
 }
@@ -250,16 +276,30 @@ mod tests {
     #[test]
     fn close_codes_classify() {
         for code in [4000, 4001, 4002, 4005, 1000, 1001, 1006, 4999] {
-            assert_eq!(default_close_verdict(Some(code)), CloseVerdict::Resume, "code {code}");
+            assert_eq!(
+                default_close_verdict(Some(code)),
+                CloseVerdict::Resume,
+                "code {code}"
+            );
         }
         assert_eq!(default_close_verdict(None), CloseVerdict::Resume);
         assert_eq!(default_close_verdict(Some(4008)), CloseVerdict::Retry);
         for code in [4003, 4007, 4009] {
-            assert_eq!(default_close_verdict(Some(code)), CloseVerdict::Identify, "code {code}");
+            assert_eq!(
+                default_close_verdict(Some(code)),
+                CloseVerdict::Identify,
+                "code {code}"
+            );
         }
-        assert_eq!(default_close_verdict(Some(4004)), CloseVerdict::Stop("Authentication failed".to_string()));
+        assert_eq!(
+            default_close_verdict(Some(4004)),
+            CloseVerdict::Stop("Authentication failed".to_string())
+        );
         for code in [4010, 4011, 4012, 4013, 4014] {
-            assert!(matches!(default_close_verdict(Some(code)), CloseVerdict::Stop(_)), "code {code}");
+            assert!(
+                matches!(default_close_verdict(Some(code)), CloseVerdict::Stop(_)),
+                "code {code}"
+            );
         }
     }
 
@@ -287,10 +327,23 @@ mod tests {
     async fn default_hooks_reproduce_the_library_behaviour() {
         let hooks = DefaultHooks;
         assert_eq!(hooks.token("tok").await.as_deref(), Some("tok"));
-        let defaults = IdentifyDefaults { custom_status: UserStatus::Online, capabilities: 16381, intents: None, large_threshold: 50, shard: None, client_build_number: Some(7) };
-        assert_eq!(hooks.identify("tok", &defaults).await, identify_payload("tok", UserStatus::Online, 16381, None, 50, None, 7));
+        let defaults = IdentifyDefaults {
+            custom_status: UserStatus::Online,
+            capabilities: 16381,
+            intents: None,
+            large_threshold: 50,
+            shard: None,
+            client_build_number: Some(7),
+        };
+        assert_eq!(
+            hooks.identify("tok", &defaults).await,
+            identify_payload("tok", UserStatus::Online, 16381, None, 50, None, 7)
+        );
         assert_eq!(hooks.on_close(Some(4009), "x"), CloseVerdict::Identify);
         let s = Duration::from_secs;
-        assert_eq!(hooks.delay(ReconnectCause::Failure, s(4), true, 0.5), (s(4), s(8)));
+        assert_eq!(
+            hooks.delay(ReconnectCause::Failure, s(4), true, 0.5),
+            (s(4), s(8))
+        );
     }
 }

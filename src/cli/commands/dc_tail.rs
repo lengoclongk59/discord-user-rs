@@ -84,9 +84,7 @@ pub async fn run(ctx: &Ctx, channel: &str, limit: u32, once: bool) -> Result<()>
                     content,
                     edited_at,
                 } => {
-                    if let Err(e) =
-                        db.apply_edit(&msg_id, Some(&content), edited_at.as_deref())
-                    {
+                    if let Err(e) = db.apply_edit(&msg_id, Some(&content), edited_at.as_deref()) {
                         output::err(&format!("persist edit failed: {}", e));
                     }
                 }
@@ -115,110 +113,111 @@ pub async fn run(ctx: &Ctx, channel: &str, limit: u32, once: bool) -> Result<()>
         let ch = Arc::clone(&target_channel);
         let db_tx = db_tx.clone();
         let meta = meta.clone();
-        user
-            .on_message_create(move |event| {
-                let msg = &event.message;
-                if msg.channel_id != *ch {
-                    return;
-                }
-                let ts = DateTime::parse_from_rfc3339(&msg.timestamp)
-                    .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
-                    .unwrap_or_else(|_| msg.timestamp.clone());
-                let sender = msg
-                    .author
-                    .global_name
-                    .as_deref()
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or(&msg.author.username);
-                let display = msg.content.replace('\n', " ");
-                println!("{} {}: {}", ts.dimmed(), sender.bold(), display);
+        user.on_message_create(move |event| {
+            let msg = &event.message;
+            if msg.channel_id != *ch {
+                return;
+            }
+            let ts = DateTime::parse_from_rfc3339(&msg.timestamp)
+                .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_else(|_| msg.timestamp.clone());
+            let sender = msg
+                .author
+                .global_name
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(&msg.author.username);
+            let display = msg.content.replace('\n', " ");
+            println!("{} {}: {}", ts.dimmed(), sender.bold(), display);
 
-                // Persist via the same DTO path the REST sync uses, so the
-                // schema and edit semantics stay consistent.
-                let raw = crate::cli::types::MessageRaw {
-                    id: msg.id.clone(),
-                    channel_id: Some(msg.channel_id.clone()),
-                    content: msg.content.clone(),
-                    timestamp: msg.timestamp.clone(),
-                    edited_timestamp: msg.edited_timestamp.clone(),
-                    author: crate::cli::types::AuthorDto {
-                        id: msg.author.id.clone(),
-                        username: msg.author.username.clone(),
-                        global_name: msg.author.global_name.clone(),
-                    },
-                    attachments: msg
-                        .attachments
-                        .iter()
-                        .map(|a| crate::cli::types::AttachmentDto {
-                            id: a.id.clone(),
-                            filename: a.filename.clone(),
-                            url: Some(a.url.clone()),
-                            content_type: a.content_type.clone(),
-                            size: a.size,
-                        })
-                        .collect(),
-                    embeds: Vec::new(),
-                };
-                let stored = StoredMessage::from_raw_with_ctx(&raw, &msg.channel_id, &meta);
-                let _ = db_tx.send(DbOp::Insert(vec![stored]));
-            })
-            .await
+            // Persist via the same DTO path the REST sync uses, so the
+            // schema and edit semantics stay consistent.
+            let raw = crate::cli::types::MessageRaw {
+                id: msg.id.clone(),
+                channel_id: Some(msg.channel_id.clone()),
+                content: msg.content.clone(),
+                timestamp: msg.timestamp.clone(),
+                edited_timestamp: msg.edited_timestamp.clone(),
+                author: crate::cli::types::AuthorDto {
+                    id: msg.author.id.clone(),
+                    username: msg.author.username.clone(),
+                    global_name: msg.author.global_name.clone(),
+                },
+                attachments: msg
+                    .attachments
+                    .iter()
+                    .map(|a| crate::cli::types::AttachmentDto {
+                        id: a.id.clone(),
+                        filename: a.filename.clone(),
+                        url: Some(a.url.clone()),
+                        content_type: a.content_type.clone(),
+                        size: a.size,
+                    })
+                    .collect(),
+                embeds: Vec::new(),
+            };
+            let stored = StoredMessage::from_raw_with_ctx(&raw, &msg.channel_id, &meta);
+            let _ = db_tx.send(DbOp::Insert(vec![stored]));
+        })
+        .await
     };
 
     // MESSAGE_UPDATE — print and persist edit.
     let _g_update = {
         let ch = Arc::clone(&target_channel);
         let db_tx = db_tx.clone();
-        user
-            .on_message_update(move |event| {
-                if event.channel_id != *ch {
-                    return;
-                }
-                let Some(content) = event.content.as_deref() else {
-                    return;
-                };
-                let display = content.replace('\n', " ");
-                println!(
-                    "{} {} {}: {}",
-                    "          ".dimmed(),
-                    event.id.dimmed(),
-                    "[edited]".yellow(),
-                    display
-                );
-                let _ = db_tx.send(DbOp::Edit {
-                    msg_id: event.id.clone(),
-                    content: content.to_string(),
-                    edited_at: event.edited_timestamp.clone(),
-                });
-            })
-            .await
+        user.on_message_update(move |event| {
+            if event.channel_id != *ch {
+                return;
+            }
+            let Some(content) = event.content.as_deref() else {
+                return;
+            };
+            let display = content.replace('\n', " ");
+            println!(
+                "{} {} {}: {}",
+                "          ".dimmed(),
+                event.id.dimmed(),
+                "[edited]".yellow(),
+                display
+            );
+            let _ = db_tx.send(DbOp::Edit {
+                msg_id: event.id.clone(),
+                content: content.to_string(),
+                edited_at: event.edited_timestamp.clone(),
+            });
+        })
+        .await
     };
 
     // MESSAGE_DELETE — annotate the stored row.
     let _g_delete = {
         let ch = Arc::clone(&target_channel);
         let db_tx = db_tx.clone();
-        user
-            .on_message_delete(move |event| {
-                if event.channel_id != *ch {
-                    return;
-                }
-                println!(
-                    "{} {} {}",
-                    "          ".dimmed(),
-                    event.id.dimmed(),
-                    "[deleted]".red()
-                );
-                let _ = db_tx.send(DbOp::Delete(event.id.clone()));
-            })
-            .await
+        user.on_message_delete(move |event| {
+            if event.channel_id != *ch {
+                return;
+            }
+            println!(
+                "{} {} {}",
+                "          ".dimmed(),
+                event.id.dimmed(),
+                "[deleted]".red()
+            );
+            let _ = db_tx.send(DbOp::Delete(event.id.clone()));
+        })
+        .await
     };
 
     user.init()
         .await
         .map_err(|e| anyhow!("Gateway connection failed: {}", e))?;
 
-    let snapshot_label = if last.is_some() { "since last sync" } else { "recent" };
+    let snapshot_label = if last.is_some() {
+        "since last sync"
+    } else {
+        "recent"
+    };
     let initial = api
         .fetch_messages_page(channel, last.as_deref(), None, limit, &meta)
         .await?;

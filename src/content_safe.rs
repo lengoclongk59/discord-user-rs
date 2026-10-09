@@ -36,14 +36,26 @@ pub struct ContentSafeOptions {
 
 impl Default for ContentSafeOptions {
     fn default() -> Self {
-        Self { clean_everyone: true, clean_here: true, clean_user: true, clean_role: true, clean_channel: true }
+        Self {
+            clean_everyone: true,
+            clean_here: true,
+            clean_user: true,
+            clean_role: true,
+            clean_channel: true,
+        }
     }
 }
 
 impl ContentSafeOptions {
     /// Create options that clean nothing.
     pub fn none() -> Self {
-        Self { clean_everyone: false, clean_here: false, clean_user: false, clean_role: false, clean_channel: false }
+        Self {
+            clean_everyone: false,
+            clean_here: false,
+            clean_user: false,
+            clean_role: false,
+            clean_channel: false,
+        }
     }
 
     /// Enable/disable `@everyone` cleaning.
@@ -81,8 +93,15 @@ impl ContentSafeOptions {
 /// * `users`   - Optional `(user_id_str, display_name)` pairs used to replace
 ///   user mentions with human-readable names.  If a mention ID is not found in
 ///   this map the fallback `@[unknown]` is used.
-pub fn content_safe(content: &str, opts: &ContentSafeOptions, users: &[(String, String)]) -> String {
-    let user_map: HashMap<&str, &str> = users.iter().map(|(id, name)| (id.as_str(), name.as_str())).collect();
+pub fn content_safe(
+    content: &str,
+    opts: &ContentSafeOptions,
+    users: &[(String, String)],
+) -> String {
+    let user_map: HashMap<&str, &str> = users
+        .iter()
+        .map(|(id, name)| (id.as_str(), name.as_str()))
+        .collect();
 
     let mut out = content.to_string();
 
@@ -96,7 +115,13 @@ pub fn content_safe(content: &str, opts: &ContentSafeOptions, users: &[(String, 
 
     // User mentions: <@123> and <@!123> (nickname mention)
     if opts.clean_user {
-        out = replace_mentions(&out, r"<@!?(\d+)>", |id| if let Some(name) = user_map.get(id) { format!("@{}", name) } else { "@[unknown]".to_string() });
+        out = replace_mentions(&out, r"<@!?(\d+)>", |id| {
+            if let Some(name) = user_map.get(id) {
+                format!("@{}", name)
+            } else {
+                "@[unknown]".to_string()
+            }
+        });
     }
 
     // Role mentions: <@&123>
@@ -141,7 +166,11 @@ where
         if text[i..].starts_with(prefix) {
             let after_prefix = i + prefix.len();
             // Handle optional '!' for user nicknames
-            let digit_start = if has_optional_bang && text[after_prefix..].starts_with('!') { after_prefix + 1 } else { after_prefix };
+            let digit_start = if has_optional_bang && text[after_prefix..].starts_with('!') {
+                after_prefix + 1
+            } else {
+                after_prefix
+            };
 
             // Collect digit run
             let mut j = digit_start;

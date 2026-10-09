@@ -137,11 +137,7 @@ impl StoredMessage {
         Self::from_raw_with_ctx(raw, channel_id, &ChannelContext::default())
     }
 
-    pub fn from_raw_with_ctx(
-        raw: &MessageRaw,
-        channel_id: &str,
-        ctx: &ChannelContext,
-    ) -> Self {
+    pub fn from_raw_with_ctx(raw: &MessageRaw, channel_id: &str, ctx: &ChannelContext) -> Self {
         let mut content_parts: Vec<String> = Vec::new();
         if !raw.content.is_empty() {
             content_parts.push(raw.content.clone());
@@ -159,9 +155,7 @@ impl StoredMessage {
         // don't mint a fake "now" that poisons every chronological query.
         let timestamp = DateTime::parse_from_rfc3339(&raw.timestamp)
             .map(|t| t.with_timezone(&Utc))
-            .unwrap_or_else(|_| {
-                DateTime::<Utc>::from_timestamp(0, 0).unwrap_or_else(Utc::now)
-            });
+            .unwrap_or_else(|_| DateTime::<Utc>::from_timestamp(0, 0).unwrap_or_else(Utc::now));
 
         let sender_name = raw
             .author

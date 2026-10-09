@@ -16,9 +16,7 @@ pub fn run(ctx: &Ctx, channel: Option<&str>, hours: Option<i64>, by: &str) -> Re
     if ctx.json {
         let data: Vec<serde_json::Value> = rows
             .iter()
-            .map(|(period, count)| {
-                serde_json::json!({ "period": period, "count": count })
-            })
+            .map(|(period, count)| serde_json::json!({ "period": period, "count": count }))
             .collect();
         output::print_json(&data);
         return Ok(());

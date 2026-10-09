@@ -43,7 +43,9 @@ impl WriteApi {
     pub async fn invite_list_channel(&self, channel_id: &str) -> Result<Value> {
         crate::cli::api::parse_snowflake(channel_id)?;
         self.raw()
-            .get::<Value>(Route::Custom(format!("channels/{}/invites", channel_id).into()))
+            .get::<Value>(Route::Custom(
+                format!("channels/{}/invites", channel_id).into(),
+            ))
             .await
             .map_err(|e| anyhow!(e.to_string()))
     }

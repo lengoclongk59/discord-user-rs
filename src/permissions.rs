@@ -30,7 +30,12 @@ use crate::types::{Channel, Member, Permissions, Role};
 ///   permissions).
 /// * `channel`     – The channel (supplies permission overwrites).
 /// * `owner_id`    – The guild owner's user ID (always gets `ADMINISTRATOR`).
-pub fn compute_permissions(member: &Member, guild_roles: &[Role], channel: &Channel, owner_id: &str) -> Permissions {
+pub fn compute_permissions(
+    member: &Member,
+    guild_roles: &[Role],
+    channel: &Channel,
+    owner_id: &str,
+) -> Permissions {
     // --- Step 1: Guild owner bypasses everything ---
     if member.user.as_ref().map(|u| u.id.as_str()) == Some(owner_id) {
         return Permissions::all();
@@ -46,7 +51,8 @@ pub fn compute_permissions(member: &Member, guild_roles: &[Role], channel: &Chan
     }
 
     // --- Step 3: Apply member's other roles ---
-    let member_role_ids: std::collections::HashSet<&str> = member.roles.iter().map(String::as_str).collect();
+    let member_role_ids: std::collections::HashSet<&str> =
+        member.roles.iter().map(String::as_str).collect();
     for role in guild_roles {
         if member_role_ids.contains(role.id.as_str()) {
             base |= parse_perms(&role.permissions);
@@ -97,13 +103,17 @@ pub fn parse_perms(s: &str) -> Permissions {
     if s.is_empty() {
         return Permissions::empty();
     }
-    s.parse::<u64>().map(Permissions::from_bits_truncate).unwrap_or(Permissions::empty())
+    s.parse::<u64>()
+        .map(Permissions::from_bits_truncate)
+        .unwrap_or(Permissions::empty())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Channel, ChannelType, Member, PermissionOverwrite, Permissions, Role, User};
+    use crate::types::{
+        Channel, ChannelType, Member, PermissionOverwrite, Permissions, Role, User,
+    };
 
     fn make_user(id: &str) -> User {
         User {

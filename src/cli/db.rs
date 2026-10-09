@@ -8,6 +8,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::cli::types::StoredMessage;
 
+/// `(msg_id, attach_id, filename, url, content_type, size)`
+pub type AttachmentRow = (String, String, String, String, Option<String>, i64);
+
 pub struct Db {
     conn: Connection,
 }
@@ -221,8 +224,7 @@ impl Db {
         // SQLITE_MAX_VARIABLE_NUMBER (default ~32k on modern builds).
         let mut existing: usize = 0;
         for chunk in msgs.chunks(500) {
-            let placeholders = std::iter::repeat("?")
-                .take(chunk.len())
+            let placeholders = std::iter::repeat_n("?", chunk.len())
                 .collect::<Vec<_>>()
                 .join(",");
             let sql = format!(
@@ -395,9 +397,8 @@ impl Db {
         &self,
         channel_id: &str,
         hours: Option<i64>,
-    ) -> Result<Vec<(String, String, String, String, Option<String>, i64)>> {
-        let cutoff =
-            hours.map(|h| (Utc::now() - chrono::Duration::hours(h)).to_rfc3339());
+    ) -> Result<Vec<AttachmentRow>> {
+        let cutoff = hours.map(|h| (Utc::now() - chrono::Duration::hours(h)).to_rfc3339());
         let mut sql = String::from(
             "SELECT a.msg_id, a.attach_id, COALESCE(a.filename,'file'),
                     COALESCE(a.url,''), a.content_type, COALESCE(a.size, 0)
@@ -410,15 +411,15 @@ impl Db {
         }
         sql.push_str(" ORDER BY m.timestamp ASC");
         let mut stmt = self.conn.prepare(&sql)?;
-        let mapper = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(
-            String,
-            String,
-            String,
-            String,
-            Option<String>,
-            i64,
-        )> {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+        let mapper = |r: &rusqlite::Row<'_>| -> rusqlite::Result<AttachmentRow> {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
         };
         let rows: Vec<_> = match cutoff {
             Some(c) => stmt
@@ -646,7 +647,12 @@ impl Db {
         let bucket_expr = match by {
             "hour" => "substr(timestamp, 1, 13)",
             "day" => "substr(timestamp, 1, 10)",
-            _ => return Err(anyhow!("Invalid grouping '{}': must be 'hour' or 'day'", by)),
+            _ => {
+                return Err(anyhow!(
+                    "Invalid grouping '{}': must be 'hour' or 'day'",
+                    by
+                ))
+            }
         };
 
         let mut sql = format!(
@@ -715,11 +721,9 @@ impl Db {
         let key = format!("history_cursor:{}", channel_id);
         let row: Option<String> = self
             .conn
-            .query_row(
-                "SELECT value FROM meta WHERE key = ?1",
-                params![key],
-                |r| r.get(0),
-            )
+            .query_row("SELECT value FROM meta WHERE key = ?1", params![key], |r| {
+                r.get(0)
+            })
             .optional()?;
         Ok(row)
     }
@@ -779,11 +783,7 @@ fn row_to_msg(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
     let timestamp = DateTime::parse_from_rfc3339(&ts_str)
         .map(|t| t.with_timezone(&Utc))
         .map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(
-                5,
-                rusqlite::types::Type::Text,
-                Box::new(e),
-            )
+            rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e))
         })?;
     Ok(StoredMessage {
         msg_id: r.get(0)?,
@@ -829,7 +829,14 @@ mod tests {
 
     fn sample_messages() -> Vec<StoredMessage> {
         vec![
-            make_msg("100", "c1", "u1", "alice", "Hello world from rust", "general"),
+            make_msg(
+                "100",
+                "c1",
+                "u1",
+                "alice",
+                "Hello world from rust",
+                "general",
+            ),
             make_msg("101", "c1", "u2", "bob", "rust is fast", "general"),
             make_msg("200", "c2", "u3", "carol", "another message", "random"),
         ]

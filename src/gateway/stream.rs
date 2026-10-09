@@ -14,10 +14,18 @@ use tokio::sync::mpsc::{self, error::TrySendError};
 pub enum GatewayEvent {
     /// An inbound frame, as received (decompressed when it arrived as a
     /// binary frame). `s` is Discord's sequence number, not the library's.
-    Frame { op: u8, s: Option<u64>, t: Option<String>, raw: String },
+    Frame {
+        op: u8,
+        s: Option<u64>,
+        t: Option<String>,
+        raw: String,
+    },
     /// The connection status changed. Never repeated for an unchanged
     /// status.
-    Status { status: GatewayStatus, detail: Option<String> },
+    Status {
+        status: GatewayStatus,
+        detail: Option<String>,
+    },
     /// `dropped` events did not fit a bounded channel. Only sent on a
     /// [`FrameBuffer::Bounded`] stream.
     Lagged { dropped: u64 },
@@ -110,7 +118,14 @@ impl EventSink {
                 (Sender::Bounded(tx), Receiver::Bounded(rx))
             }
         };
-        (Self { tx, dropped: 0, last_status: None }, GatewayEvents { rx })
+        (
+            Self {
+                tx,
+                dropped: 0,
+                last_status: None,
+            },
+            GatewayEvents { rx },
+        )
     }
 
     /// Deliver `event` without waiting. On a full bounded channel the event
@@ -122,7 +137,9 @@ impl EventSink {
             }
             Sender::Bounded(tx) => {
                 if self.dropped > 0 {
-                    match tx.try_send(GatewayEvent::Lagged { dropped: self.dropped }) {
+                    match tx.try_send(GatewayEvent::Lagged {
+                        dropped: self.dropped,
+                    }) {
                         Ok(()) => self.dropped = 0,
                         Err(TrySendError::Full(_)) => {
                             self.dropped += 1;
@@ -151,7 +168,10 @@ impl EventSink {
     /// channel gets a short grace period, so the terminal event is not lost
     /// to a consumer that is merely slow.
     pub(crate) async fn finish(mut self, detail: Option<String>) {
-        let stopped = GatewayEvent::Status { status: GatewayStatus::Stopped, detail };
+        let stopped = GatewayEvent::Status {
+            status: GatewayStatus::Stopped,
+            detail,
+        };
         match &self.tx {
             Sender::Unbounded(tx) => {
                 let _ = tx.send(stopped);
@@ -159,7 +179,14 @@ impl EventSink {
             Sender::Bounded(tx) => {
                 let tx = tx.clone();
                 let send = async {
-                    if self.dropped > 0 && tx.send(GatewayEvent::Lagged { dropped: self.dropped }).await.is_ok() {
+                    if self.dropped > 0
+                        && tx
+                            .send(GatewayEvent::Lagged {
+                                dropped: self.dropped,
+                            })
+                            .await
+                            .is_ok()
+                    {
                         self.dropped = 0;
                     }
                     let _ = tx.send(stopped).await;
@@ -175,7 +202,12 @@ mod tests {
     use super::*;
 
     fn frame(n: u64) -> GatewayEvent {
-        GatewayEvent::Frame { op: 0, s: Some(n), t: Some("X".to_string()), raw: n.to_string() }
+        GatewayEvent::Frame {
+            op: 0,
+            s: Some(n),
+            t: Some("X".to_string()),
+            raw: n.to_string(),
+        }
     }
 
     fn drain(events: &mut GatewayEvents) -> Vec<GatewayEvent> {
@@ -201,7 +233,10 @@ mod tests {
         }
         assert_eq!(drain(&mut events), [frame(0), frame(1)]);
         sink.emit(frame(5));
-        assert_eq!(drain(&mut events), [GatewayEvent::Lagged { dropped: 3 }, frame(5)]);
+        assert_eq!(
+            drain(&mut events),
+            [GatewayEvent::Lagged { dropped: 3 }, frame(5)]
+        );
     }
 
     #[test]
@@ -232,7 +267,14 @@ mod tests {
                 other => panic!("{other:?}"),
             })
             .collect();
-        assert_eq!(statuses, [GatewayStatus::Connecting, GatewayStatus::Live, GatewayStatus::Connecting]);
+        assert_eq!(
+            statuses,
+            [
+                GatewayStatus::Connecting,
+                GatewayStatus::Live,
+                GatewayStatus::Connecting
+            ]
+        );
     }
 
     #[tokio::test]
@@ -241,7 +283,13 @@ mod tests {
         sink.emit(frame(0));
         sink.finish(Some("shutdown".to_string())).await;
         assert_eq!(events.recv().await, Some(frame(0)));
-        assert_eq!(events.recv().await, Some(GatewayEvent::Status { status: GatewayStatus::Stopped, detail: Some("shutdown".to_string()) }));
+        assert_eq!(
+            events.recv().await,
+            Some(GatewayEvent::Status {
+                status: GatewayStatus::Stopped,
+                detail: Some("shutdown".to_string())
+            })
+        );
         assert_eq!(events.recv().await, None);
     }
 
@@ -252,8 +300,17 @@ mod tests {
         sink.emit(frame(1));
         let finish = tokio::spawn(sink.finish(None));
         assert_eq!(events.recv().await, Some(frame(0)));
-        assert_eq!(events.recv().await, Some(GatewayEvent::Lagged { dropped: 1 }));
-        assert_eq!(events.recv().await, Some(GatewayEvent::Status { status: GatewayStatus::Stopped, detail: None }));
+        assert_eq!(
+            events.recv().await,
+            Some(GatewayEvent::Lagged { dropped: 1 })
+        );
+        assert_eq!(
+            events.recv().await,
+            Some(GatewayEvent::Status {
+                status: GatewayStatus::Stopped,
+                detail: None
+            })
+        );
         assert_eq!(events.recv().await, None);
         finish.await.unwrap();
     }

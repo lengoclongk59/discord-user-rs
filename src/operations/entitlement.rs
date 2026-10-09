@@ -49,7 +49,11 @@ pub trait EntitlementOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn list_entitlements(&self, application_id: u64, query: Option<EntitlementListQuery>) -> Result<Vec<Entitlement>> {
+    async fn list_entitlements(
+        &self,
+        application_id: u64,
+        query: Option<EntitlementListQuery>,
+    ) -> Result<Vec<Entitlement>> {
         let q = query.unwrap_or_default();
         self.http()
             .get(Route::ApplicationEntitlements {
@@ -73,8 +77,17 @@ pub trait EntitlementOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure or if the entitlement is
     /// not found.
-    async fn get_entitlement(&self, application_id: u64, entitlement_id: u64) -> Result<Entitlement> {
-        self.http().get(Route::ApplicationEntitlement { application_id, entitlement_id }).await
+    async fn get_entitlement(
+        &self,
+        application_id: u64,
+        entitlement_id: u64,
+    ) -> Result<Entitlement> {
+        self.http()
+            .get(Route::ApplicationEntitlement {
+                application_id,
+                entitlement_id,
+            })
+            .await
     }
 
     /// Create a test-mode entitlement that grants access without an actual
@@ -84,7 +97,11 @@ pub trait EntitlementOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn create_test_entitlement(&self, application_id: u64, body: CreateTestEntitlementRequest) -> Result<Entitlement> {
+    async fn create_test_entitlement(
+        &self,
+        application_id: u64,
+        body: CreateTestEntitlementRequest,
+    ) -> Result<Entitlement> {
         self.http()
             .post(
                 Route::ApplicationEntitlements {
@@ -110,8 +127,17 @@ pub trait EntitlementOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn delete_test_entitlement(&self, application_id: u64, entitlement_id: u64) -> Result<()> {
-        self.http().delete(Route::ApplicationEntitlement { application_id, entitlement_id }).await
+    async fn delete_test_entitlement(
+        &self,
+        application_id: u64,
+        entitlement_id: u64,
+    ) -> Result<()> {
+        self.http()
+            .delete(Route::ApplicationEntitlement {
+                application_id,
+                entitlement_id,
+            })
+            .await
     }
 
     /// Mark a one-time-purchase (consumable) entitlement as consumed.
@@ -123,7 +149,13 @@ pub trait EntitlementOps: DiscordContext {
     /// Returns [`DiscordError::Http`] on HTTP failure.
     async fn consume_entitlement(&self, application_id: u64, entitlement_id: u64) -> Result<()> {
         self.http()
-            .post_no_response(Route::ConsumeEntitlement { application_id, entitlement_id }, serde_json::Value::Null)
+            .post_no_response(
+                Route::ConsumeEntitlement {
+                    application_id,
+                    entitlement_id,
+                },
+                serde_json::Value::Null,
+            )
             .await
     }
 }

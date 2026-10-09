@@ -13,7 +13,7 @@ pub async fn run(ctx: &Ctx, channel: &str, message: &str, yes: bool) -> Result<(
     // Validate inputs before making any network requests
     parse_snowflake(channel)?;
     parse_snowflake(message)?;
-    
+
     if !yes {
         print!(
             "Delete message {} in channel {}? Type 'yes' to confirm: ",
@@ -39,7 +39,10 @@ pub async fn run(ctx: &Ctx, channel: &str, message: &str, yes: bool) -> Result<(
             "channel_id": channel,
         }));
     } else {
-        output::success(&format!("Deleted message {} in channel {}", message, channel));
+        output::success(&format!(
+            "Deleted message {} in channel {}",
+            message, channel
+        ));
     }
     Ok(())
 }

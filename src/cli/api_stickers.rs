@@ -16,8 +16,7 @@ impl WriteApi {
         file_path: &str,
     ) -> Result<Value> {
         crate::cli::api::parse_snowflake(guild_id)?;
-        let bytes =
-            std::fs::read(file_path).with_context(|| format!("reading {}", file_path))?;
+        let bytes = std::fs::read(file_path).with_context(|| format!("reading {}", file_path))?;
         let mime = if file_path.ends_with(".json") {
             "application/json"
         } else if file_path.ends_with(".apng") {
@@ -57,9 +56,7 @@ impl WriteApi {
         crate::cli::api::parse_snowflake(sticker_id)?;
         self.raw()
             .patch::<Value, _>(
-                Route::Custom(
-                    format!("guilds/{}/stickers/{}", guild_id, sticker_id).into(),
-                ),
+                Route::Custom(format!("guilds/{}/stickers/{}", guild_id, sticker_id).into()),
                 body,
             )
             .await

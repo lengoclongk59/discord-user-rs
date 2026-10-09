@@ -24,9 +24,7 @@ impl WriteApi {
         crate::cli::api::parse_snowflake(event_id)?;
         self.raw()
             .patch::<Value, _>(
-                Route::Custom(
-                    format!("guilds/{}/scheduled-events/{}", guild_id, event_id).into(),
-                ),
+                Route::Custom(format!("guilds/{}/scheduled-events/{}", guild_id, event_id).into()),
                 body,
             )
             .await

@@ -3,9 +3,7 @@
 //! Endpoints under `/applications/{application.id}/role-connections/metadata`.
 
 use crate::{
-    context::DiscordContext,
-    error::Result,
-    route::Route,
+    context::DiscordContext, error::Result, route::Route,
     types::monetization::ApplicationRoleConnectionMetadata,
 };
 
@@ -21,8 +19,13 @@ pub trait RoleConnectionOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn get_application_role_connection_metadata_records(&self, application_id: u64) -> Result<Vec<ApplicationRoleConnectionMetadata>> {
-        self.http().get(Route::ApplicationRoleConnectionMetadata { application_id }).await
+    async fn get_application_role_connection_metadata_records(
+        &self,
+        application_id: u64,
+    ) -> Result<Vec<ApplicationRoleConnectionMetadata>> {
+        self.http()
+            .get(Route::ApplicationRoleConnectionMetadata { application_id })
+            .await
     }
 
     /// Replace the application's role-connection metadata records.
@@ -33,7 +36,16 @@ pub trait RoleConnectionOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn update_application_role_connection_metadata_records(&self, application_id: u64, records: Vec<ApplicationRoleConnectionMetadata>) -> Result<Vec<ApplicationRoleConnectionMetadata>> {
-        self.http().put(Route::ApplicationRoleConnectionMetadata { application_id }, records).await
+    async fn update_application_role_connection_metadata_records(
+        &self,
+        application_id: u64,
+        records: Vec<ApplicationRoleConnectionMetadata>,
+    ) -> Result<Vec<ApplicationRoleConnectionMetadata>> {
+        self.http()
+            .put(
+                Route::ApplicationRoleConnectionMetadata { application_id },
+                records,
+            )
+            .await
     }
 }

@@ -158,7 +158,13 @@ impl Message {
     ///
     /// Mirrors serenity's `Message::is_system()`.
     pub fn is_system(&self) -> bool {
-        !matches!(self.message_type, MessageType::Default | MessageType::Reply | MessageType::ChatInputCommand | MessageType::ContextMenuCommand)
+        !matches!(
+            self.message_type,
+            MessageType::Default
+                | MessageType::Reply
+                | MessageType::ChatInputCommand
+                | MessageType::ContextMenuCommand
+        )
     }
 
     /// Whether this is an ephemeral message visible only to the target user.
@@ -344,7 +350,8 @@ pub struct Attachment {
 impl Attachment {
     /// Decode the raw `flags` bitfield into typed [`AttachmentFlags`], if present.
     pub fn flag_bits(&self) -> Option<crate::types::enums::AttachmentFlags> {
-        self.flags.and_then(|raw| crate::types::enums::AttachmentFlags::from_bits(raw))
+        self.flags
+            .and_then(crate::types::enums::AttachmentFlags::from_bits)
     }
 }
 
@@ -484,7 +491,7 @@ pub struct MessageReference {
 }
 
 /// Request payload for sending a message
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct SendMessageRequest<'a> {
     pub content: &'a str,
     pub tts: bool,
@@ -503,12 +510,6 @@ pub struct SendMessageRequest<'a> {
     /// builder if you specifically need it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mobile_network_type: Option<&'a str>,
-}
-
-impl<'a> Default for SendMessageRequest<'a> {
-    fn default() -> Self {
-        Self { content: "", tts: false, flags: 0, message_reference: None, nonce: None, mobile_network_type: None }
-    }
 }
 
 /// Request payload for editing a message

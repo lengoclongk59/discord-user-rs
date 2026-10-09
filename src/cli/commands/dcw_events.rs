@@ -221,9 +221,12 @@ pub async fn dispatch(ctx: &Ctx, cmd: EventCmd) -> Result<()> {
             }
         }
 
-        EventCmd::Delete { guild, event_id, yes } => {
-            if !yes
-                && !output::confirm(&format!("Delete event {} in guild {}?", event_id, guild))?
+        EventCmd::Delete {
+            guild,
+            event_id,
+            yes,
+        } => {
+            if !yes && !output::confirm(&format!("Delete event {} in guild {}?", event_id, guild))?
             {
                 return Ok(());
             }
@@ -234,10 +237,7 @@ pub async fn dispatch(ctx: &Ctx, cmd: EventCmd) -> Result<()> {
                     "guild_id": guild,
                 }));
             } else {
-                output::success(&format!(
-                    "Deleted event {} in guild {}",
-                    event_id, guild
-                ));
+                output::success(&format!("Deleted event {} in guild {}", event_id, guild));
             }
         }
     }

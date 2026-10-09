@@ -59,7 +59,10 @@ impl ResendPolicy {
 /// HTTP's idempotent methods: sending one twice has the effect of sending it
 /// once.
 fn is_idempotent(method: &Method) -> bool {
-    matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS | Method::PUT | Method::DELETE)
+    matches!(
+        *method,
+        Method::GET | Method::HEAD | Method::OPTIONS | Method::PUT | Method::DELETE
+    )
 }
 
 /// Read a response body as `T`. An empty body (a 204, or a 200 with nothing in
@@ -117,8 +120,8 @@ impl InvalidRequestTracker {
         }
         guard.push_back(now);
         let count = guard.len();
-        drop(guard);  // Release lock before any logging or error handling
-        
+        drop(guard); // Release lock before any logging or error handling
+
         if count >= INVALID_REQUEST_ERROR_THRESHOLD {
             tracing::error!(
                 invalid_request_count = count,
@@ -188,7 +191,11 @@ pub struct Ratelimit {
 
 impl Ratelimit {
     pub fn get_route_key(method: &Method, endpoint: &str) -> String {
-        let path = if let Some(stripped) = endpoint.split("/api/v10/").nth(1) { stripped } else { endpoint.trim_start_matches('/') };
+        let path = if let Some(stripped) = endpoint.split("/api/v10/").nth(1) {
+            stripped
+        } else {
+            endpoint.trim_start_matches('/')
+        };
 
         let path = path.split('?').next().unwrap_or(path);
         let parts: Vec<&str> = path.split('/').collect();
@@ -230,7 +237,10 @@ impl Ratelimit {
         let wait_info = {
             if let Some(bucket) = self.buckets.get(route_key) {
                 if bucket.remaining == 0 {
-                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64();
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs_f64();
 
                     if bucket.reset_at > now {
                         Some((bucket.reset_at - now, bucket.limit))
@@ -247,7 +257,11 @@ impl Ratelimit {
 
         if let Some((secs, limit)) = wait_info {
             if secs > 0.0 {
-                tracing::debug!("Preemptive rate limit hit for {}, waiting {:.3}s", route_key, secs);
+                tracing::debug!(
+                    "Preemptive rate limit hit for {}, waiting {:.3}s",
+                    route_key,
+                    secs
+                );
                 if let Some(cb) = &self.callback {
                     cb(RatelimitInfo {
                         timeout: std::time::Duration::from_secs_f64(secs),
@@ -263,24 +277,42 @@ impl Ratelimit {
     }
 
     pub fn post_hook(&self, route_key: &str, headers: &reqwest::header::HeaderMap) {
-        let remaining = headers.get("x-ratelimit-remaining").and_then(|h| h.to_str().ok()).and_then(|s| s.parse::<u64>().ok());
+        let remaining = headers
+            .get("x-ratelimit-remaining")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok());
 
-        let limit = headers.get("x-ratelimit-limit").and_then(|h| h.to_str().ok()).and_then(|s| s.parse::<u64>().ok());
+        let limit = headers
+            .get("x-ratelimit-limit")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok());
 
-        let reset_at = headers.get("x-ratelimit-reset").and_then(|h| h.to_str().ok()).and_then(|s| s.parse::<f64>().ok());
+        let reset_at = headers
+            .get("x-ratelimit-reset")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<f64>().ok());
 
-        let reset_after = headers.get("x-ratelimit-reset-after").and_then(|h| h.to_str().ok()).and_then(|s| s.parse::<f64>().ok());
+        let reset_after = headers
+            .get("x-ratelimit-reset-after")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<f64>().ok());
 
         if let (Some(remaining), Some(limit), Some(reset_at)) = (remaining, limit, reset_at) {
             // Use entry API for atomic update to prevent race condition
-            self.buckets.entry(route_key.to_string())
+            self.buckets
+                .entry(route_key.to_string())
                 .and_modify(|b| {
                     b.remaining = remaining;
                     b.limit = limit;
                     b.reset_at = reset_at;
                     b.reset_after = reset_after;
                 })
-                .or_insert_with(|| RatelimitingBucket { remaining, limit, reset_at, reset_after });
+                .or_insert_with(|| RatelimitingBucket {
+                    remaining,
+                    limit,
+                    reset_at,
+                    reset_after,
+                });
         }
     }
 
@@ -291,26 +323,55 @@ impl Ratelimit {
     /// they back off proactively rather than re-spamming the bucket. If
     /// `X-RateLimit-Remaining` is missing (typical on 429), force it to 0
     /// so `pre_hook` will sleep until reset.
-    pub fn record_429(&self, route_key: &str, headers: &reqwest::header::HeaderMap, fallback_retry_after: f64) {
-        let remaining = headers.get("x-ratelimit-remaining").and_then(|h| h.to_str().ok()).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+    pub fn record_429(
+        &self,
+        route_key: &str,
+        headers: &reqwest::header::HeaderMap,
+        fallback_retry_after: f64,
+    ) {
+        let remaining = headers
+            .get("x-ratelimit-remaining")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
 
-        let limit = headers.get("x-ratelimit-limit").and_then(|h| h.to_str().ok()).and_then(|s| s.parse::<u64>().ok()).unwrap_or_else(|| self.buckets.get(route_key).map(|b| b.limit).unwrap_or(0));
+        let limit = headers
+            .get("x-ratelimit-limit")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or_else(|| self.buckets.get(route_key).map(|b| b.limit).unwrap_or(0));
 
-        let reset_after = headers.get("x-ratelimit-reset-after").and_then(|h| h.to_str().ok()).and_then(|s| s.parse::<f64>().ok());
+        let reset_after = headers
+            .get("x-ratelimit-reset-after")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<f64>().ok());
 
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
 
-        let reset_at = headers.get("x-ratelimit-reset").and_then(|h| h.to_str().ok()).and_then(|s| s.parse::<f64>().ok()).unwrap_or_else(|| now + reset_after.unwrap_or(fallback_retry_after));
+        let reset_at = headers
+            .get("x-ratelimit-reset")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or_else(|| now + reset_after.unwrap_or(fallback_retry_after));
 
         // Use entry API for atomic update to prevent race condition
-        self.buckets.entry(route_key.to_string())
+        self.buckets
+            .entry(route_key.to_string())
             .and_modify(|b| {
                 b.remaining = remaining;
                 b.limit = limit;
                 b.reset_at = reset_at;
                 b.reset_after = reset_after;
             })
-            .or_insert_with(|| RatelimitingBucket { remaining, limit, reset_at, reset_after });
+            .or_insert_with(|| RatelimitingBucket {
+                remaining,
+                limit,
+                reset_at,
+                reset_after,
+            });
     }
 }
 
@@ -342,7 +403,11 @@ pub struct DiscordHttpClient {
 
 impl DiscordHttpClient {
     /// Create a new Discord HTTP client with a token
-    pub fn new(token: impl Into<String>, proxy: Option<String>, ratelimiter_disabled: bool) -> Self {
+    pub fn new(
+        token: impl Into<String>,
+        proxy: Option<String>,
+        ratelimiter_disabled: bool,
+    ) -> Self {
         let mut builder = Client::builder().timeout(Duration::from_secs(30)).pool_max_idle_per_host(10).pool_idle_timeout(Duration::from_secs(90)).tcp_keepalive(Duration::from_secs(60)).tcp_nodelay(true).user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36").http1_only();
 
         if let Some(proxy_url) = proxy {
@@ -351,11 +416,16 @@ impl DiscordHttpClient {
             }
         }
 
-        let client = builder.build().unwrap_or_else(|e| panic!("Failed to create HTTP client: {}", e));
+        let client = builder
+            .build()
+            .unwrap_or_else(|e| panic!("Failed to create HTTP client: {}", e));
 
         Self {
             client,
-            credentials: Arc::new(std::sync::RwLock::new(Arc::new(Credentials { token: token.into(), headers: HashMap::new() }))),
+            credentials: Arc::new(std::sync::RwLock::new(Arc::new(Credentials {
+                token: token.into(),
+                headers: HashMap::new(),
+            }))),
             api_base: Arc::from(API_BASE),
             resend: ResendPolicy::default(),
             ratelimit: Ratelimit::default(),
@@ -368,8 +438,15 @@ impl DiscordHttpClient {
     }
 
     /// Create a new Discord HTTP client with custom headers
-    pub fn with_headers(headers: HashMap<String, String>, proxy: Option<String>, ratelimiter_disabled: bool) -> Option<Self> {
-        let token = headers.iter().find(|(k, _)| k.to_lowercase() == "authorization").map(|(_, v)| v.clone())?;
+    pub fn with_headers(
+        headers: HashMap<String, String>,
+        proxy: Option<String>,
+        ratelimiter_disabled: bool,
+    ) -> Option<Self> {
+        let token = headers
+            .iter()
+            .find(|(k, _)| k.to_lowercase() == "authorization")
+            .map(|(_, v)| v.clone())?;
 
         let mut builder = Client::builder().timeout(Duration::from_secs(30)).pool_max_idle_per_host(10).pool_idle_timeout(Duration::from_secs(90)).tcp_keepalive(Duration::from_secs(60)).tcp_nodelay(true).user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36").http1_only();
 
@@ -379,11 +456,16 @@ impl DiscordHttpClient {
             }
         }
 
-        let client = builder.build().unwrap_or_else(|e| panic!("Failed to create HTTP client: {}", e));
+        let client = builder
+            .build()
+            .unwrap_or_else(|e| panic!("Failed to create HTTP client: {}", e));
 
         Some(Self {
             client,
-            credentials: Arc::new(std::sync::RwLock::new(Arc::new(Credentials { token, headers }))),
+            credentials: Arc::new(std::sync::RwLock::new(Arc::new(Credentials {
+                token,
+                headers,
+            }))),
             api_base: Arc::from(API_BASE),
             resend: ResendPolicy::default(),
             ratelimit: Ratelimit::default(),
@@ -433,11 +515,19 @@ impl DiscordHttpClient {
 
     /// The credential as it stands. A request takes one snapshot per attempt.
     fn credentials(&self) -> Arc<Credentials> {
-        Arc::clone(&self.credentials.read().unwrap_or_else(|poisoned| poisoned.into_inner()))
+        Arc::clone(
+            &self
+                .credentials
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
     }
 
     fn store_credentials(&self, next: Credentials) {
-        *self.credentials.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Arc::new(next);
+        *self
+            .credentials
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Arc::new(next);
     }
 
     /// Replace the token for every later request, on this client and every
@@ -446,7 +536,10 @@ impl DiscordHttpClient {
     /// building a new client.
     pub fn set_token(&self, token: impl Into<String>) {
         let headers = self.credentials().headers.clone();
-        self.store_credentials(Credentials { token: token.into(), headers });
+        self.store_credentials(Credentials {
+            token: token.into(),
+            headers,
+        });
     }
 
     /// Replace the extra headers and the token together, as
@@ -454,7 +547,11 @@ impl DiscordHttpClient {
     /// case) is the token. Returns `false` and changes nothing when there is
     /// no `authorization` entry.
     pub fn replace_headers(&self, headers: HashMap<String, String>) -> bool {
-        let Some(token) = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("authorization")).map(|(_, v)| v.clone()) else {
+        let Some(token) = headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+            .map(|(_, v)| v.clone())
+        else {
             return false;
         };
         self.store_credentials(Credentials { token, headers });
@@ -496,10 +593,16 @@ impl DiscordHttpClient {
     /// The extra headers, minus the token (sent by
     /// [`Self::apply_common_headers`]). A multipart body names its own content
     /// type with its boundary, so a configured `content-type` is left out there.
-    fn apply_custom_headers(request: reqwest::RequestBuilder, creds: &Credentials, multipart: bool) -> reqwest::RequestBuilder {
+    fn apply_custom_headers(
+        request: reqwest::RequestBuilder,
+        creds: &Credentials,
+        multipart: bool,
+    ) -> reqwest::RequestBuilder {
         let mut request = request;
         for (key, value) in &creds.headers {
-            if key.eq_ignore_ascii_case("authorization") || (multipart && key.eq_ignore_ascii_case("content-type")) {
+            if key.eq_ignore_ascii_case("authorization")
+                || (multipart && key.eq_ignore_ascii_case("content-type"))
+            {
                 continue;
             }
             request = request.header(key.as_str(), value.as_str());
@@ -523,7 +626,10 @@ impl DiscordHttpClient {
     }
 
     /// Set a callback to execute when rate limited
-    pub fn set_ratelimit_callback(&mut self, callback: std::sync::Arc<dyn Fn(RatelimitInfo) + Send + Sync>) {
+    pub fn set_ratelimit_callback(
+        &mut self,
+        callback: std::sync::Arc<dyn Fn(RatelimitInfo) + Send + Sync>,
+    ) {
         self.ratelimit.callback = Some(callback);
     }
 
@@ -533,63 +639,102 @@ impl DiscordHttpClient {
     }
 
     /// Make a POST request
-    pub async fn post<T: DeserializeOwned, B: Serialize>(&self, route: crate::route::Route<'_>, body: B) -> Result<T> {
+    pub async fn post<T: DeserializeOwned, B: Serialize>(
+        &self,
+        route: crate::route::Route<'_>,
+        body: B,
+    ) -> Result<T> {
         self.request(Method::POST, route, Some(body)).await
     }
 
     /// Make a PATCH request
-    pub async fn patch<T: DeserializeOwned, B: Serialize>(&self, route: crate::route::Route<'_>, body: B) -> Result<T> {
+    pub async fn patch<T: DeserializeOwned, B: Serialize>(
+        &self,
+        route: crate::route::Route<'_>,
+        body: B,
+    ) -> Result<T> {
         self.request(Method::PATCH, route, Some(body)).await
     }
 
     /// Make a PUT request
-    pub async fn put<T: DeserializeOwned, B: Serialize>(&self, route: crate::route::Route<'_>, body: B) -> Result<T> {
+    pub async fn put<T: DeserializeOwned, B: Serialize>(
+        &self,
+        route: crate::route::Route<'_>,
+        body: B,
+    ) -> Result<T> {
         self.request(Method::PUT, route, Some(body)).await
     }
 
     /// Make a DELETE request
     pub async fn delete(&self, route: crate::route::Route<'_>) -> Result<()> {
-        self.request_no_response(Method::DELETE, route, None::<()>).await
+        self.request_no_response(Method::DELETE, route, None::<()>)
+            .await
     }
 
     /// Make a DELETE request and deserialize the response body.
-    pub async fn delete_with_response<T: DeserializeOwned>(&self, route: crate::route::Route<'_>) -> Result<T> {
+    pub async fn delete_with_response<T: DeserializeOwned>(
+        &self,
+        route: crate::route::Route<'_>,
+    ) -> Result<T> {
         self.request(Method::DELETE, route, None::<()>).await
     }
 
     /// Make a POST request with no body and no response body (e.g. typing
     /// indicator)
     pub async fn post_empty(&self, route: crate::route::Route<'_>) -> Result<()> {
-        self.request_no_response(Method::POST, route, None::<()>).await
+        self.request_no_response(Method::POST, route, None::<()>)
+            .await
     }
 
     /// Make a PUT request with no body and no response body (e.g. add
     /// reaction — `PUT /channels/{c}/messages/{m}/reactions/{e}/@me` returns
     /// 204 with no payload).
     pub async fn put_empty(&self, route: crate::route::Route<'_>) -> Result<()> {
-        self.request_no_response(Method::PUT, route, None::<()>).await
+        self.request_no_response(Method::PUT, route, None::<()>)
+            .await
     }
 
     /// Make a POST request with a body but discard the response body.
-    pub async fn post_no_response<B: Serialize>(&self, route: crate::route::Route<'_>, body: B) -> Result<()> {
-        self.request_no_response(Method::POST, route, Some(body)).await
+    pub async fn post_no_response<B: Serialize>(
+        &self,
+        route: crate::route::Route<'_>,
+        body: B,
+    ) -> Result<()> {
+        self.request_no_response(Method::POST, route, Some(body))
+            .await
     }
 
     /// Make a PATCH request with a body but discard the response body.
-    pub async fn patch_no_response<B: Serialize>(&self, route: crate::route::Route<'_>, body: B) -> Result<()> {
-        self.request_no_response(Method::PATCH, route, Some(body)).await
+    pub async fn patch_no_response<B: Serialize>(
+        &self,
+        route: crate::route::Route<'_>,
+        body: B,
+    ) -> Result<()> {
+        self.request_no_response(Method::PATCH, route, Some(body))
+            .await
     }
 
     /// Make a POST request with custom Referer header
-    pub async fn post_with_referer<T: DeserializeOwned, B: Serialize>(&self, route: crate::route::Route<'_>, body: B, referer: &str) -> Result<T> {
-        self.request_with_referer(Method::POST, route, Some(body), Some(referer)).await
+    pub async fn post_with_referer<T: DeserializeOwned, B: Serialize>(
+        &self,
+        route: crate::route::Route<'_>,
+        body: B,
+        referer: &str,
+    ) -> Result<T> {
+        self.request_with_referer(Method::POST, route, Some(body), Some(referer))
+            .await
     }
 
     /// POST a multipart message with file attachments.
     ///
     /// `payload_json` carries the message body (content, embeds, etc.).
     /// Each attachment is sent as a `files[N]` part.
-    pub async fn post_multipart<T: DeserializeOwned>(&self, route: crate::route::Route<'_>, payload_json: serde_json::Value, attachments: Vec<crate::types::CreateAttachment>) -> Result<T> {
+    pub async fn post_multipart<T: DeserializeOwned>(
+        &self,
+        route: crate::route::Route<'_>,
+        payload_json: serde_json::Value,
+        attachments: Vec<crate::types::CreateAttachment>,
+    ) -> Result<T> {
         use reqwest::multipart::{Form, Part};
 
         let path_cow = route.path();
@@ -600,13 +745,25 @@ impl DiscordHttpClient {
         for attempt in 0..DEFAULT_RETRY_COUNT {
             if !self.ratelimiter_disabled {
                 drop(self.ratelimit.global.lock().await);
-                self.ratelimit.pre_hook(&Method::POST, endpoint, &route_key).await;
+                self.ratelimit
+                    .pre_hook(&Method::POST, endpoint, &route_key)
+                    .await;
             }
 
-            let mut form = Form::new().part("payload_json", Part::text(payload_json.to_string()).mime_str("application/json").unwrap_or_else(|_| Part::text(payload_json.to_string())));
+            let mut form = Form::new().part(
+                "payload_json",
+                Part::text(payload_json.to_string())
+                    .mime_str("application/json")
+                    .unwrap_or_else(|_| Part::text(payload_json.to_string())),
+            );
 
             for (i, att) in attachments.iter().enumerate() {
-                let part = Part::bytes(att.data.clone()).file_name(att.filename.clone()).mime_str(&att.mime_type).unwrap_or_else(|_| Part::bytes(att.data.clone()).file_name(att.filename.clone()));
+                let part = Part::bytes(att.data.clone())
+                    .file_name(att.filename.clone())
+                    .mime_str(&att.mime_type)
+                    .unwrap_or_else(|_| {
+                        Part::bytes(att.data.clone()).file_name(att.filename.clone())
+                    });
                 form = form.part(format!("files[{}]", i), part);
             }
 
@@ -615,7 +772,12 @@ impl DiscordHttpClient {
             request = Self::apply_common_headers(request, &creds, self.fingerprint(), None);
             request = Self::apply_custom_headers(request, &creds, true);
 
-            debug!("Multipart request attempt {}/{}: POST {}", attempt + 1, DEFAULT_RETRY_COUNT, url);
+            debug!(
+                "Multipart request attempt {}/{}: POST {}",
+                attempt + 1,
+                DEFAULT_RETRY_COUNT,
+                url
+            );
             match request.send().await {
                 Ok(response) => {
                     let status = response.status();
@@ -632,12 +794,25 @@ impl DiscordHttpClient {
 
                         let info = Self::extract_rate_limit_info(response.headers());
                         if !self.ratelimiter_disabled {
-                            self.ratelimit.record_429(&route_key, response.headers(), info.retry_after);
+                            self.ratelimit.record_429(
+                                &route_key,
+                                response.headers(),
+                                info.retry_after,
+                            );
                         }
                         if !self.resend.resends_after_rate_limit() {
-                            return Err(DiscordError::RateLimited { retry_after: info.retry_after, bucket: info.bucket, global: info.global, scope: info.scope });
+                            return Err(DiscordError::RateLimited {
+                                retry_after: info.retry_after,
+                                bucket: info.bucket,
+                                global: info.global,
+                                scope: info.scope,
+                            });
                         }
-                        let wait_time = if info.retry_after < 2.0 { 2.0 } else { info.retry_after };
+                        let wait_time = if info.retry_after < 2.0 {
+                            2.0
+                        } else {
+                            info.retry_after
+                        };
                         debug!("Rate limited on multipart, waiting {:.2}s", wait_time);
                         tokio::time::sleep(Duration::from_secs_f64(wait_time)).await;
                         continue;
@@ -646,7 +821,17 @@ impl DiscordHttpClient {
                         self.invalid_requests.record().await?;
                     }
                     let error_body = response.text().await.unwrap_or_default();
-                    return Err(if status.is_server_error() { DiscordError::ServiceError { status: status.as_u16(), body: error_body } } else { DiscordError::UnexpectedStatusCode { status: status.as_u16(), body: error_body } });
+                    return Err(if status.is_server_error() {
+                        DiscordError::ServiceError {
+                            status: status.as_u16(),
+                            body: error_body,
+                        }
+                    } else {
+                        DiscordError::UnexpectedStatusCode {
+                            status: status.as_u16(),
+                            body: error_body,
+                        }
+                    });
                 }
                 // A POST whose outcome is unknown: it may have been posted, so
                 // it is never sent again (`ResendPolicy`).
@@ -662,7 +847,11 @@ impl DiscordHttpClient {
     /// Use this for endpoints like sticker creation that need custom multipart
     /// fields (not the `files[N]` + `payload_json` structure of message
     /// attachments).
-    pub async fn post_raw_multipart<T: DeserializeOwned>(&self, path: String, form: reqwest::multipart::Form) -> Result<T> {
+    pub async fn post_raw_multipart<T: DeserializeOwned>(
+        &self,
+        path: String,
+        form: reqwest::multipart::Form,
+    ) -> Result<T> {
         let url = self.url_for(&path);
         let route_key = Ratelimit::get_route_key(&Method::POST, &path);
 
@@ -670,7 +859,9 @@ impl DiscordHttpClient {
         // accept a single attempt (multipart bodies cannot be cloned cheaply).
         if !self.ratelimiter_disabled {
             drop(self.ratelimit.global.lock().await);
-            self.ratelimit.pre_hook(&Method::POST, &path, &route_key).await;
+            self.ratelimit
+                .pre_hook(&Method::POST, &path, &route_key)
+                .await;
         }
 
         let creds = self.credentials();
@@ -692,36 +883,73 @@ impl DiscordHttpClient {
             self.invalid_requests.record().await?;
             if code == 429 && !self.ratelimiter_disabled {
                 let info = Self::extract_rate_limit_info(response.headers());
-                self.ratelimit.record_429(&route_key, response.headers(), info.retry_after);
+                self.ratelimit
+                    .record_429(&route_key, response.headers(), info.retry_after);
             }
         }
         let error_body = response.text().await.unwrap_or_default();
-        Err(if status.is_server_error() { DiscordError::ServiceError { status: status.as_u16(), body: error_body } } else { DiscordError::UnexpectedStatusCode { status: status.as_u16(), body: error_body } })
+        Err(if status.is_server_error() {
+            DiscordError::ServiceError {
+                status: status.as_u16(),
+                body: error_body,
+            }
+        } else {
+            DiscordError::UnexpectedStatusCode {
+                status: status.as_u16(),
+                body: error_body,
+            }
+        })
     }
 
     /// Make a request and return the response
-    async fn request<T: DeserializeOwned, B: Serialize>(&self, method: Method, route: crate::route::Route<'_>, body: Option<B>) -> Result<T> {
+    async fn request<T: DeserializeOwned, B: Serialize>(
+        &self,
+        method: Method,
+        route: crate::route::Route<'_>,
+        body: Option<B>,
+    ) -> Result<T> {
         self.request_with_referer(method, route, body, None).await
     }
 
     /// Make a request with optional referer header
-    async fn request_with_referer<T: DeserializeOwned, B: Serialize>(&self, method: Method, route: crate::route::Route<'_>, body: Option<B>, referer: Option<&str>) -> Result<T> {
-        let response = self.do_request_with_referer(method, route, body, referer, None).await?;
+    async fn request_with_referer<T: DeserializeOwned, B: Serialize>(
+        &self,
+        method: Method,
+        route: crate::route::Route<'_>,
+        body: Option<B>,
+        referer: Option<&str>,
+    ) -> Result<T> {
+        let response = self
+            .do_request_with_referer(method, route, body, referer, None)
+            .await?;
         let text = response.text().await?;
         parse_body(&text)
     }
 
     /// Make a request without expecting a response body
-    async fn request_no_response<B: Serialize>(&self, method: Method, route: crate::route::Route<'_>, body: Option<B>) -> Result<()> {
-        self.do_request_with_referer(method, route, body, None, None).await?;
+    async fn request_no_response<B: Serialize>(
+        &self,
+        method: Method,
+        route: crate::route::Route<'_>,
+        body: Option<B>,
+    ) -> Result<()> {
+        self.do_request_with_referer(method, route, body, None, None)
+            .await?;
         Ok(())
     }
 
     /// Make a request that may return either a JSON body or 204 No Content.
     /// Returns `Ok(None)` on 204 (or empty body); otherwise parses the body
     /// as `T` and returns `Ok(Some(_))`.
-    pub async fn request_optional<T: DeserializeOwned, B: Serialize>(&self, method: Method, route: crate::route::Route<'_>, body: Option<B>) -> Result<Option<T>> {
-        let response = self.do_request_with_referer(method, route, body, None, None).await?;
+    pub async fn request_optional<T: DeserializeOwned, B: Serialize>(
+        &self,
+        method: Method,
+        route: crate::route::Route<'_>,
+        body: Option<B>,
+    ) -> Result<Option<T>> {
+        let response = self
+            .do_request_with_referer(method, route, body, None, None)
+            .await?;
         if response.status() == reqwest::StatusCode::NO_CONTENT {
             return Ok(None);
         }
@@ -737,14 +965,20 @@ impl DiscordHttpClient {
 
     /// PUT variant of [`request_optional`] for the common `add_guild_member`
     /// shape (201 with `Member`, or 204 if already a member).
-    pub async fn put_optional<T: DeserializeOwned, B: Serialize>(&self, route: crate::route::Route<'_>, body: B) -> Result<Option<T>> {
+    pub async fn put_optional<T: DeserializeOwned, B: Serialize>(
+        &self,
+        route: crate::route::Route<'_>,
+        body: B,
+    ) -> Result<Option<T>> {
         self.request_optional(Method::PUT, route, Some(body)).await
     }
 
     /// GET request returning the raw response bytes. Used for binary
     /// endpoints such as guild widget PNGs and CDN downloads.
     pub async fn get_bytes(&self, route: crate::route::Route<'_>) -> Result<Vec<u8>> {
-        let response = self.do_request_with_referer(Method::GET, route, None::<()>, None, None).await?;
+        let response = self
+            .do_request_with_referer(Method::GET, route, None::<()>, None, None)
+            .await?;
         let bytes = response.bytes().await?;
         Ok(bytes.to_vec())
     }
@@ -756,15 +990,30 @@ impl DiscordHttpClient {
     /// encoding so callers pass the raw reason string. Pass `None` to fall
     /// back to the standard request path with no reason header — semantics
     /// are identical to [`request`].
-    pub async fn request_with_reason<T: DeserializeOwned, B: Serialize>(&self, method: Method, route: crate::route::Route<'_>, body: Option<B>, reason: Option<&str>) -> Result<T> {
-        let response = self.do_request_with_referer(method, route, body, None, reason).await?;
+    pub async fn request_with_reason<T: DeserializeOwned, B: Serialize>(
+        &self,
+        method: Method,
+        route: crate::route::Route<'_>,
+        body: Option<B>,
+        reason: Option<&str>,
+    ) -> Result<T> {
+        let response = self
+            .do_request_with_referer(method, route, body, None, reason)
+            .await?;
         let text = response.text().await?;
         parse_body(&text)
     }
 
     /// Variant of [`request_with_reason`] that ignores the response body.
-    pub async fn request_with_reason_no_response<B: Serialize>(&self, method: Method, route: crate::route::Route<'_>, body: Option<B>, reason: Option<&str>) -> Result<()> {
-        self.do_request_with_referer(method, route, body, None, reason).await?;
+    pub async fn request_with_reason_no_response<B: Serialize>(
+        &self,
+        method: Method,
+        route: crate::route::Route<'_>,
+        body: Option<B>,
+        reason: Option<&str>,
+    ) -> Result<()> {
+        self.do_request_with_referer(method, route, body, None, reason)
+            .await?;
         Ok(())
     }
 
@@ -786,7 +1035,11 @@ impl DiscordHttpClient {
 
     /// The client-fingerprint headers a user token carries, as configured.
     fn fingerprint(&self) -> Fingerprint<'_> {
-        Fingerprint { super_properties_b64: self.super_properties_b64.as_deref(), locale: self.discord_locale.as_deref(), timezone: self.discord_timezone.as_deref() }
+        Fingerprint {
+            super_properties_b64: self.super_properties_b64.as_deref(),
+            locale: self.discord_locale.as_deref(),
+            timezone: self.discord_timezone.as_deref(),
+        }
     }
 
     /// Apply Discord-specific shared headers (auth, super-properties,
@@ -806,7 +1059,12 @@ impl DiscordHttpClient {
     ///   and returns HTTP 403 with body `{"message":"internal network error","code":40333}`
     ///   — visible to operators as "Missing permission" even when the bot
     ///   has Administrator.
-    fn apply_common_headers(mut request: reqwest::RequestBuilder, creds: &Credentials, fingerprint: Fingerprint<'_>, reason: Option<&str>) -> reqwest::RequestBuilder {
+    fn apply_common_headers(
+        mut request: reqwest::RequestBuilder,
+        creds: &Credentials,
+        fingerprint: Fingerprint<'_>,
+        reason: Option<&str>,
+    ) -> reqwest::RequestBuilder {
         // Authorization. Bot/Bearer tokens are passed through verbatim;
         // user tokens stay bare. Identical wire shape; the predicate below
         // gates the rest of the header set.
@@ -814,7 +1072,14 @@ impl DiscordHttpClient {
 
         if is_application_token(&creds.token) {
             // Bot path: override User-Agent and skip the fingerprint headers.
-            request = request.header(header::USER_AGENT, concat!("DiscordBot (https://github.com/lengoclongk59/discord-user-rs, ", env!("CARGO_PKG_VERSION"), ")"));
+            request = request.header(
+                header::USER_AGENT,
+                concat!(
+                    "DiscordBot (https://github.com/lengoclongk59/discord-user-rs, ",
+                    env!("CARGO_PKG_VERSION"),
+                    ")"
+                ),
+            );
         } else {
             // User-token path: full client fingerprint.
             if let Some(sp) = fingerprint.super_properties_b64 {
@@ -838,7 +1103,14 @@ impl DiscordHttpClient {
     }
 
     /// Internal request method with retry logic and optional referer
-    async fn do_request_with_referer<B: Serialize>(&self, method: Method, route: crate::route::Route<'_>, body: Option<B>, referer: Option<&str>, reason: Option<&str>) -> Result<Response> {
+    async fn do_request_with_referer<B: Serialize>(
+        &self,
+        method: Method,
+        route: crate::route::Route<'_>,
+        body: Option<B>,
+        referer: Option<&str>,
+        reason: Option<&str>,
+    ) -> Result<Response> {
         let path_cow = route.path();
         let endpoint = path_cow.as_ref();
         let url = self.url_for(endpoint);
@@ -872,7 +1144,13 @@ impl DiscordHttpClient {
                 request = request.json(b);
             }
 
-            debug!("Request attempt {}/{}: {} {}", attempt + 1, DEFAULT_RETRY_COUNT, method, url);
+            debug!(
+                "Request attempt {}/{}: {} {}",
+                attempt + 1,
+                DEFAULT_RETRY_COUNT,
+                method,
+                url
+            );
 
             let result = request.send().await;
 
@@ -902,28 +1180,58 @@ impl DiscordHttpClient {
                         // future calls on the same route would re-spam
                         // the bucket.
                         if !self.ratelimiter_disabled {
-                            self.ratelimit.record_429(&route_key, response.headers(), info.retry_after);
+                            self.ratelimit.record_429(
+                                &route_key,
+                                response.headers(),
+                                info.retry_after,
+                            );
                         }
 
                         if self.ratelimiter_disabled || !self.resend.resends_after_rate_limit() {
-                            return Err(DiscordError::RateLimited { retry_after: info.retry_after, bucket: info.bucket, global: info.global, scope: info.scope });
+                            return Err(DiscordError::RateLimited {
+                                retry_after: info.retry_after,
+                                bucket: info.bucket,
+                                global: info.global,
+                                scope: info.scope,
+                            });
                         }
 
                         if info.retry_after > MAX_RETRY_AFTER_SECONDS as f64 {
-                            return Err(DiscordError::RateLimited { retry_after: info.retry_after, bucket: info.bucket, global: info.global, scope: info.scope });
+                            return Err(DiscordError::RateLimited {
+                                retry_after: info.retry_after,
+                                bucket: info.bucket,
+                                global: info.global,
+                                scope: info.scope,
+                            });
                         }
 
                         // Enforce minimum wait time of 2.0s to avoid spamming if server sends 0 or
                         // missing header
-                        let wait_time = if info.retry_after < 2.0 { 2.0 } else { info.retry_after };
-                        debug!("Rate limited (global: {}), waiting {:.2} seconds", info.global, wait_time);
+                        let wait_time = if info.retry_after < 2.0 {
+                            2.0
+                        } else {
+                            info.retry_after
+                        };
+                        debug!(
+                            "Rate limited (global: {}), waiting {:.2} seconds",
+                            info.global, wait_time
+                        );
 
                         // If it's a global rate limit, acquire the global lock across all routes
                         // This prevents any other requests from proceeding while we sleep
-                        let _global_guard = if info.global { Some(self.ratelimit.global.lock().await) } else { None };
+                        let _global_guard = if info.global {
+                            Some(self.ratelimit.global.lock().await)
+                        } else {
+                            None
+                        };
 
                         if let Some(cb) = &self.ratelimit.callback {
-                            let limit = response.headers().get("x-ratelimit-limit").and_then(|h| h.to_str().ok()).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+                            let limit = response
+                                .headers()
+                                .get("x-ratelimit-limit")
+                                .and_then(|h| h.to_str().ok())
+                                .and_then(|s| s.parse::<u64>().ok())
+                                .unwrap_or(0);
 
                             cb(RatelimitInfo {
                                 timeout: Duration::from_secs_f64(wait_time),
@@ -971,13 +1279,17 @@ impl DiscordHttpClient {
                     }
 
                     if error_body.contains("captcha_key") {
-                        let service = serde_json::from_str::<serde_json::Value>(&error_body).ok().and_then(|v| v["captcha_service"].as_str().map(|s| s.to_string())).unwrap_or_else(|| "unknown".to_string());
+                        let service = serde_json::from_str::<serde_json::Value>(&error_body)
+                            .ok()
+                            .and_then(|v| v["captcha_service"].as_str().map(|s| s.to_string()))
+                            .unwrap_or_else(|| "unknown".to_string());
                         return Err(DiscordError::CaptchaRequired { service });
                     }
 
                     if status.as_u16() == 401 {
                         // Check if the error body indicates an invalid token
-                        if error_body.contains("401: Unauthorized") || error_body.contains("token") {
+                        if error_body.contains("401: Unauthorized") || error_body.contains("token")
+                        {
                             warn!(discord.body = %error_body, "Mapped 401 -> InvalidToken");
                             return Err(DiscordError::InvalidToken);
                         }
@@ -987,7 +1299,10 @@ impl DiscordHttpClient {
 
                     // Handle 403 Forbidden - permission denied
                     if status.as_u16() == 403 {
-                        let permission = serde_json::from_str::<serde_json::Value>(&error_body).ok().and_then(|v| v["message"].as_str().map(|s| s.to_string())).unwrap_or_else(|| "unknown".to_string());
+                        let permission = serde_json::from_str::<serde_json::Value>(&error_body)
+                            .ok()
+                            .and_then(|v| v["message"].as_str().map(|s| s.to_string()))
+                            .unwrap_or_else(|| "unknown".to_string());
                         return Err(DiscordError::PermissionDenied { permission });
                     }
 
@@ -1007,20 +1322,31 @@ impl DiscordHttpClient {
                     error!(status = %status, error_body = %error_body, "HTTP error");
 
                     // Retry on server errors, when the outcome may be repeated
-                    if status.is_server_error() && attempt < DEFAULT_RETRY_COUNT - 1 && self.resend.resends_after_unknown_outcome(&method) {
+                    if status.is_server_error()
+                        && attempt < DEFAULT_RETRY_COUNT - 1
+                        && self.resend.resends_after_unknown_outcome(&method)
+                    {
                         tokio::time::sleep(Duration::from_secs(2)).await;
                         continue;
                     }
 
                     if status.is_server_error() {
-                        return Err(DiscordError::ServiceError { status: status.as_u16(), body: error_body });
+                        return Err(DiscordError::ServiceError {
+                            status: status.as_u16(),
+                            body: error_body,
+                        });
                     }
 
-                    return Err(DiscordError::UnexpectedStatusCode { status: status.as_u16(), body: error_body });
+                    return Err(DiscordError::UnexpectedStatusCode {
+                        status: status.as_u16(),
+                        body: error_body,
+                    });
                 }
                 Err(e) => {
                     error!(error = %e, "Request error");
-                    if attempt < DEFAULT_RETRY_COUNT - 1 && self.resend.resends_after_unknown_outcome(&method) {
+                    if attempt < DEFAULT_RETRY_COUNT - 1
+                        && self.resend.resends_after_unknown_outcome(&method)
+                    {
                         tokio::time::sleep(Duration::from_secs(2)).await;
                         continue;
                     }
@@ -1034,15 +1360,34 @@ impl DiscordHttpClient {
 
     /// Extract rate limit info from headers
     fn extract_rate_limit_info(headers: &header::HeaderMap) -> RateLimitInfo {
-        let retry_after = headers.get("retry-after").and_then(|h| h.to_str().ok()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(5.0);
+        let retry_after = headers
+            .get("retry-after")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(5.0);
 
-        let bucket = headers.get("x-ratelimit-bucket").and_then(|h| h.to_str().ok()).map(|s| s.to_string());
+        let bucket = headers
+            .get("x-ratelimit-bucket")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_string());
 
-        let global = headers.get("x-ratelimit-global").and_then(|h| h.to_str().ok()).map(|s| s == "true").unwrap_or(false);
+        let global = headers
+            .get("x-ratelimit-global")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s == "true")
+            .unwrap_or(false);
 
-        let scope = headers.get("x-ratelimit-scope").and_then(|h| h.to_str().ok()).map(|s| s.to_string());
+        let scope = headers
+            .get("x-ratelimit-scope")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_string());
 
-        RateLimitInfo { retry_after, bucket, global, scope }
+        RateLimitInfo {
+            retry_after,
+            bucket,
+            global,
+            scope,
+        }
     }
 
     /// Extract resource type from Discord API URL
@@ -1104,7 +1449,10 @@ mod tests {
     fn test_extract_rate_limit_info() {
         let mut headers = HeaderMap::new();
         headers.insert("retry-after", HeaderValue::from_static("12.5"));
-        headers.insert("x-ratelimit-bucket", HeaderValue::from_static("test-bucket"));
+        headers.insert(
+            "x-ratelimit-bucket",
+            HeaderValue::from_static("test-bucket"),
+        );
         headers.insert("x-ratelimit-global", HeaderValue::from_static("true"));
         headers.insert("x-ratelimit-scope", HeaderValue::from_static("shared"));
 
@@ -1143,7 +1491,13 @@ mod tests {
         let policy = ResendPolicy::default();
         assert_eq!(policy, ResendPolicy::IdempotentOnly);
         assert!(policy.resends_after_rate_limit());
-        for method in [Method::GET, Method::HEAD, Method::OPTIONS, Method::PUT, Method::DELETE] {
+        for method in [
+            Method::GET,
+            Method::HEAD,
+            Method::OPTIONS,
+            Method::PUT,
+            Method::DELETE,
+        ] {
             assert!(policy.resends_after_unknown_outcome(&method), "{method}");
         }
         for method in [Method::POST, Method::PATCH] {
@@ -1155,7 +1509,13 @@ mod tests {
     fn the_never_policy_resends_nothing() {
         let policy = ResendPolicy::Never;
         assert!(!policy.resends_after_rate_limit());
-        for method in [Method::GET, Method::PUT, Method::DELETE, Method::POST, Method::PATCH] {
+        for method in [
+            Method::GET,
+            Method::PUT,
+            Method::DELETE,
+            Method::POST,
+            Method::PATCH,
+        ] {
             assert!(!policy.resends_after_unknown_outcome(&method), "{method}");
         }
     }
@@ -1176,21 +1536,45 @@ mod tests {
         client.set_token("second");
         assert_eq!(clone.token(), "second");
 
-        let headers = HashMap::from([("Authorization".to_string(), "third".to_string()), ("cookie".to_string(), "a=b".to_string())]);
+        let headers = HashMap::from([
+            ("Authorization".to_string(), "third".to_string()),
+            ("cookie".to_string(), "a=b".to_string()),
+        ]);
         assert!(clone.replace_headers(headers));
         assert_eq!(client.token(), "third");
-        assert_eq!(client.credentials().headers.get("cookie").map(String::as_str), Some("a=b"));
+        assert_eq!(
+            client
+                .credentials()
+                .headers
+                .get("cookie")
+                .map(String::as_str),
+            Some("a=b")
+        );
 
         assert!(!client.replace_headers(HashMap::from([("cookie".to_string(), "c=d".to_string())])));
-        assert_eq!(client.token(), "third", "a refused replacement changes nothing");
+        assert_eq!(
+            client.token(),
+            "third",
+            "a refused replacement changes nothing"
+        );
     }
 
     #[test]
     fn a_relative_route_goes_to_the_configured_base() {
-        let client = DiscordHttpClient::new("t", None, false).with_api_base("http://127.0.0.1:9/api/v10/");
-        assert_eq!(client.url_for("channels/1/messages"), "http://127.0.0.1:9/api/v10/channels/1/messages");
-        assert_eq!(client.url_for("https://discord.com/api/v9/interactions"), "https://discord.com/api/v9/interactions");
-        assert_eq!(DiscordHttpClient::new("t", None, false).url_for("/users/@me"), format!("{API_BASE}/users/@me"));
+        let client =
+            DiscordHttpClient::new("t", None, false).with_api_base("http://127.0.0.1:9/api/v10/");
+        assert_eq!(
+            client.url_for("channels/1/messages"),
+            "http://127.0.0.1:9/api/v10/channels/1/messages"
+        );
+        assert_eq!(
+            client.url_for("https://discord.com/api/v9/interactions"),
+            "https://discord.com/api/v9/interactions"
+        );
+        assert_eq!(
+            DiscordHttpClient::new("t", None, false).url_for("/users/@me"),
+            format!("{API_BASE}/users/@me")
+        );
     }
 
     #[test]

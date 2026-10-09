@@ -50,9 +50,7 @@ impl WriteApi {
     pub async fn ban_list(&self, guild_id: &str) -> Result<Value> {
         crate::cli::api::parse_snowflake(guild_id)?;
         self.raw()
-            .get::<Value>(Route::Custom(
-                format!("guilds/{}/bans", guild_id).into(),
-            ))
+            .get::<Value>(Route::Custom(format!("guilds/{}/bans", guild_id).into()))
             .await
             .map_err(|e| anyhow!(e.to_string()))
     }

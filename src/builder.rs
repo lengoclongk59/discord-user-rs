@@ -148,7 +148,11 @@ mod tests {
         // This test verifies the HAPPY PATH compiles and produces correct output.
         // The UNHAPPY PATH (missing channel) is a compile error — verified by
         // the absence of a `CreateMessage<NoChannel>::build` method.
-        let payload = CreateMessage::new().channel("111222333").content("hello").tts(false).build();
+        let payload = CreateMessage::new()
+            .channel("111222333")
+            .content("hello")
+            .tts(false)
+            .build();
 
         assert_eq!(payload["channel_id"], "111222333");
         assert_eq!(payload["content"], "hello");
@@ -158,7 +162,11 @@ mod tests {
     #[test]
     fn optional_fields_before_channel() {
         // Optional fields can be set before or after .channel().
-        let payload = CreateMessage::new().content("pre-channel content").tts(true).channel("999").build();
+        let payload = CreateMessage::new()
+            .content("pre-channel content")
+            .tts(true)
+            .channel("999")
+            .build();
 
         assert_eq!(payload["channel_id"], "999");
         assert_eq!(payload["content"], "pre-channel content");

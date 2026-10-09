@@ -220,10 +220,7 @@ fn safe_filename(input: &str) -> Option<String> {
         .file_stem()
         .and_then(|e| e.to_str())
         .unwrap_or("");
-    if WIN_RESERVED
-        .iter()
-        .any(|r| r.eq_ignore_ascii_case(stem))
-    {
+    if WIN_RESERVED.iter().any(|r| r.eq_ignore_ascii_case(stem)) {
         // Prefix to disambiguate. "nul.png" → "_nul.png".
         return Some(format!("_{}", s));
     }

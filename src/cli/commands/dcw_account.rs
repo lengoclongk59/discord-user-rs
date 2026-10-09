@@ -208,7 +208,9 @@ pub async fn dispatch(ctx: &Ctx, cmd: AccountCmd) -> Result<()> {
             let api = WriteApi::new(&token);
             api.delete_connection(&conn_type, &conn_id).await?;
             if ctx.json {
-                output::print_json(&serde_json::json!({ "removed": format!("{}/{}", conn_type, conn_id) }));
+                output::print_json(
+                    &serde_json::json!({ "removed": format!("{}/{}", conn_type, conn_id) }),
+                );
             } else {
                 output::success(&format!("Removed connection {}/{}", conn_type, conn_id));
             }

@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 
-use crate::cli::auth;
 use crate::cli::args::AuthArgs;
+use crate::cli::auth;
 use crate::cli::config;
 use crate::cli::output;
 

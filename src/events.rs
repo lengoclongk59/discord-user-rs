@@ -52,7 +52,11 @@ impl DispatchEvent {
     /// Construct a dispatch event with a freshly-allocated sequence number.
     /// Prefer this over the struct literal so `seq` stays monotonic.
     pub fn new(event_type: String, data: Value) -> Self {
-        Self { event_type, data, seq: next_event_seq() }
+        Self {
+            event_type,
+            data,
+            seq: next_event_seq(),
+        }
     }
 }
 
@@ -78,7 +82,10 @@ static EVENT_SEQ: OnceLock<AtomicU64> = OnceLock::new();
 
 fn event_seq_counter() -> &'static AtomicU64 {
     EVENT_SEQ.get_or_init(|| {
-        let seed = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
         AtomicU64::new(seed)
     })
 }
@@ -174,14 +181,23 @@ impl EventEmitter {
         F: Fn(DispatchEvent) + Send + Sync + 'static,
     {
         let id = generate_listener_id();
-        let listener = EventListener { id: id.clone(), callback: Arc::new(callback) };
+        let listener = EventListener {
+            id: id.clone(),
+            callback: Arc::new(callback),
+        };
 
         // DashMap handles locking internally per shard
-        self.private_events.entry(event_name.to_string()).or_default().push(listener);
+        self.private_events
+            .entry(event_name.to_string())
+            .or_default()
+            .push(listener);
 
         self.handled_types.insert(event_name.to_string());
 
-        EventSubscription { id, emitter: self.clone() }
+        EventSubscription {
+            id,
+            emitter: self.clone(),
+        }
     }
 
     /// Register a listener for multiple events (space-separated)
@@ -203,10 +219,19 @@ impl EventEmitter {
         F: Fn(DispatchEvent) + Send + Sync + 'static,
     {
         let id = generate_listener_id();
-        let listener = EventListener { id: id.clone(), callback: Arc::new(callback) };
+        let listener = EventListener {
+            id: id.clone(),
+            callback: Arc::new(callback),
+        };
 
-        self.any_events.write().unwrap_or_else(|e| e.into_inner()).push(listener);
-        EventSubscription { id, emitter: self.clone() }
+        self.any_events
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(listener);
+        EventSubscription {
+            id,
+            emitter: self.clone(),
+        }
     }
 
     /// Register a listener for unhandled events
@@ -215,10 +240,19 @@ impl EventEmitter {
         F: Fn(DispatchEvent) + Send + Sync + 'static,
     {
         let id = generate_listener_id();
-        let listener = EventListener { id: id.clone(), callback: Arc::new(callback) };
+        let listener = EventListener {
+            id: id.clone(),
+            callback: Arc::new(callback),
+        };
 
-        self.unhandled_events.write().unwrap_or_else(|e| e.into_inner()).push(listener);
-        EventSubscription { id, emitter: self.clone() }
+        self.unhandled_events
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(listener);
+        EventSubscription {
+            id,
+            emitter: self.clone(),
+        }
     }
 
     /// Remove a listener by ID (synchronous — safe to call from Drop)
@@ -243,7 +277,10 @@ impl EventEmitter {
 
         // Check unhandled events — same pattern
         {
-            let mut unhandled = self.unhandled_events.write().unwrap_or_else(|e| e.into_inner());
+            let mut unhandled = self
+                .unhandled_events
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(pos) = unhandled.iter().position(|l| l.id == listener_id) {
                 unhandled.remove(pos);
                 return true;
@@ -294,7 +331,11 @@ impl EventEmitter {
         }
 
         // 2. Dispatch to any-event listeners.
-        let any_listeners = self.any_events.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let any_listeners = self
+            .any_events
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         for listener in any_listeners {
             let ev = event.clone();
             spawn_listener("dispatch::event_handler::any", async move {
@@ -304,7 +345,11 @@ impl EventEmitter {
 
         // 3. Dispatch to unhandled if no specific handler was registered.
         if !self.handled_types.contains(&event_type) {
-            let unhandled_listeners = self.unhandled_events.read().unwrap_or_else(|e| e.into_inner()).clone();
+            let unhandled_listeners = self
+                .unhandled_events
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
             for listener in unhandled_listeners {
                 let ev = event.clone();
                 spawn_listener("dispatch::event_handler::unhandled", async move {
@@ -316,12 +361,18 @@ impl EventEmitter {
 
     /// Check if there are any listeners for an event
     pub async fn has_listeners(&self, event_name: &str) -> bool {
-        self.private_events.get(event_name).map(|l| !l.is_empty()).unwrap_or(false)
+        self.private_events
+            .get(event_name)
+            .map(|l| !l.is_empty())
+            .unwrap_or(false)
     }
 
     /// Get count of listeners for an event
     pub async fn listener_count(&self, event_name: &str) -> usize {
-        self.private_events.get(event_name).map(|l| l.len()).unwrap_or(0)
+        self.private_events
+            .get(event_name)
+            .map(|l| l.len())
+            .unwrap_or(0)
     }
 }
 
@@ -371,7 +422,13 @@ mod tests {
         let seq = next_event_seq();
         const Y2K_NANOS: u64 = 946_684_800_000_000_000; //  2000-01-01 UTC
         const Y2100_NANOS: u64 = 4_102_444_800_000_000_000; // 2100-01-01 UTC
-        assert!(seq > Y2K_NANOS, "seq seemed to seed below year-2000 wall-clock: {seq}");
-        assert!(seq < Y2100_NANOS, "seq seemed to seed above year-2100 wall-clock: {seq}");
+        assert!(
+            seq > Y2K_NANOS,
+            "seq seemed to seed below year-2000 wall-clock: {seq}"
+        );
+        assert!(
+            seq < Y2100_NANOS,
+            "seq seemed to seed above year-2100 wall-clock: {seq}"
+        );
     }
 }

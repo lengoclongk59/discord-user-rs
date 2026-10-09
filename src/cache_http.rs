@@ -51,7 +51,12 @@ pub trait CacheHttp {
         if let Some(guild) = self.cache().and_then(|c| c.guild(&guild_id.to_string())) {
             return Ok(guild);
         }
-        self.http().get(Route::GetGuild { guild_id: guild_id.get(), with_counts: false }).await
+        self.http()
+            .get(Route::GetGuild {
+                guild_id: guild_id.get(),
+                with_counts: false,
+            })
+            .await
     }
 
     /// Get a channel — from cache if available, otherwise via HTTP.
@@ -59,7 +64,11 @@ pub trait CacheHttp {
     /// Note: the channel cache is not yet populated from gateway events;
     /// this currently always falls through to HTTP.
     async fn channel(&self, channel_id: &ChannelId) -> Result<Channel> {
-        self.http().get(Route::GetChannel { channel_id: channel_id.get() }).await
+        self.http()
+            .get(Route::GetChannel {
+                channel_id: channel_id.get(),
+            })
+            .await
     }
 
     /// Get a user — from cache if available, otherwise via HTTP (user profile).
@@ -67,7 +76,13 @@ pub trait CacheHttp {
         if let Some(user) = self.cache().and_then(|c| c.user(&user_id.to_string())) {
             return Ok(user);
         }
-        let profile: UserProfile = self.http().get(Route::GetUserProfile { user_id: user_id.get(), guild_id: None }).await?;
+        let profile: UserProfile = self
+            .http()
+            .get(Route::GetUserProfile {
+                user_id: user_id.get(),
+                guild_id: None,
+            })
+            .await?;
         Ok(profile.user)
     }
 }
@@ -126,7 +141,10 @@ mod tests {
     }
 
     fn make_ctx(settings: CacheSettings) -> FakeCtx {
-        FakeCtx { http: DiscordHttpClient::new("fake_token", None, false), cache: Cache::with_settings(settings) }
+        FakeCtx {
+            http: DiscordHttpClient::new("fake_token", None, false),
+            cache: Cache::with_settings(settings),
+        }
     }
 
     #[tokio::test]

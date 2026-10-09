@@ -78,8 +78,19 @@ pub trait ThreadOps: DiscordContext {
     ///
     /// # Permissions
     /// Requires CREATE_PUBLIC_THREADS or CREATE_PRIVATE_THREADS as appropriate.
-    async fn create_thread(&self, channel_id: &ChannelId, req: CreateThreadRequest) -> Result<Channel> {
-        self.http().post(Route::CreateThread { channel_id: channel_id.get() }, req).await
+    async fn create_thread(
+        &self,
+        channel_id: &ChannelId,
+        req: CreateThreadRequest,
+    ) -> Result<Channel> {
+        self.http()
+            .post(
+                Route::CreateThread {
+                    channel_id: channel_id.get(),
+                },
+                req,
+            )
+            .await
     }
 
     /// Create a thread attached to an existing message.
@@ -91,8 +102,21 @@ pub trait ThreadOps: DiscordContext {
     ///
     /// # Permissions
     /// Requires CREATE_PUBLIC_THREADS permission.
-    async fn create_thread_from_message(&self, channel_id: &ChannelId, message_id: &MessageId, req: CreateThreadRequest) -> Result<Channel> {
-        self.http().post(Route::CreateThreadFromMessage { channel_id: channel_id.get(), message_id: message_id.get() }, req).await
+    async fn create_thread_from_message(
+        &self,
+        channel_id: &ChannelId,
+        message_id: &MessageId,
+        req: CreateThreadRequest,
+    ) -> Result<Channel> {
+        self.http()
+            .post(
+                Route::CreateThreadFromMessage {
+                    channel_id: channel_id.get(),
+                    message_id: message_id.get(),
+                },
+                req,
+            )
+            .await
     }
 
     /// Edit a thread's settings (name, archived state, locked, auto-archive
@@ -105,7 +129,14 @@ pub trait ThreadOps: DiscordContext {
     /// Requires MANAGE_THREADS permission (or be the thread creator for private
     /// threads).
     async fn edit_thread(&self, channel_id: &ChannelId, req: EditThreadRequest) -> Result<Channel> {
-        self.http().patch(Route::EditChannel { channel_id: channel_id.get() }, req).await
+        self.http()
+            .patch(
+                Route::EditChannel {
+                    channel_id: channel_id.get(),
+                },
+                req,
+            )
+            .await
     }
 
     /// Join a thread as the current user.
@@ -113,7 +144,14 @@ pub trait ThreadOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
     async fn join_thread(&self, channel_id: &ChannelId) -> Result<()> {
-        self.http().put(Route::JoinThread { channel_id: channel_id.get() }, EMPTY_REQUEST).await
+        self.http()
+            .put(
+                Route::JoinThread {
+                    channel_id: channel_id.get(),
+                },
+                EMPTY_REQUEST,
+            )
+            .await
     }
 
     /// Leave a thread as the current user.
@@ -121,7 +159,11 @@ pub trait ThreadOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
     async fn leave_thread(&self, channel_id: &ChannelId) -> Result<()> {
-        self.http().delete(Route::LeaveThread { channel_id: channel_id.get() }).await
+        self.http()
+            .delete(Route::LeaveThread {
+                channel_id: channel_id.get(),
+            })
+            .await
     }
 
     /// Add a member to a thread.
@@ -132,7 +174,15 @@ pub trait ThreadOps: DiscordContext {
     /// # Permissions
     /// Requires MANAGE_THREADS or be the thread creator.
     async fn add_thread_member(&self, channel_id: &ChannelId, user_id: &UserId) -> Result<()> {
-        self.http().put(Route::AddThreadMember { channel_id: channel_id.get(), user_id: user_id.get() }, EMPTY_REQUEST).await
+        self.http()
+            .put(
+                Route::AddThreadMember {
+                    channel_id: channel_id.get(),
+                    user_id: user_id.get(),
+                },
+                EMPTY_REQUEST,
+            )
+            .await
     }
 
     /// Remove a member from a thread.
@@ -143,7 +193,12 @@ pub trait ThreadOps: DiscordContext {
     /// # Permissions
     /// Requires MANAGE_THREADS or be the thread creator.
     async fn remove_thread_member(&self, channel_id: &ChannelId, user_id: &UserId) -> Result<()> {
-        self.http().delete(Route::RemoveThreadMember { channel_id: channel_id.get(), user_id: user_id.get() }).await
+        self.http()
+            .delete(Route::RemoveThreadMember {
+                channel_id: channel_id.get(),
+                user_id: user_id.get(),
+            })
+            .await
     }
 
     /// Get all members of a thread.
@@ -151,7 +206,11 @@ pub trait ThreadOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
     async fn get_thread_members(&self, channel_id: &ChannelId) -> Result<Vec<ThreadMember>> {
-        self.http().get(Route::GetThreadMembers { channel_id: channel_id.get() }).await
+        self.http()
+            .get(Route::GetThreadMembers {
+                channel_id: channel_id.get(),
+            })
+            .await
     }
 
     /// Get all active (non-archived) threads in a guild.
@@ -159,7 +218,11 @@ pub trait ThreadOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
     async fn get_active_threads(&self, guild_id: &GuildId) -> Result<ActiveThreads> {
-        self.http().get(Route::GetActiveThreads { guild_id: guild_id.get() }).await
+        self.http()
+            .get(Route::GetActiveThreads {
+                guild_id: guild_id.get(),
+            })
+            .await
     }
 
     /// Archive a thread by setting `archived: true`.
@@ -170,7 +233,14 @@ pub trait ThreadOps: DiscordContext {
     /// # Permissions
     /// Requires MANAGE_THREADS or be the thread creator.
     async fn archive_thread(&self, channel_id: &ChannelId) -> Result<Channel> {
-        self.edit_thread(channel_id, EditThreadRequest { archived: Some(true), ..Default::default() }).await
+        self.edit_thread(
+            channel_id,
+            EditThreadRequest {
+                archived: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     /// Unarchive a thread by setting `archived: false`.
@@ -181,7 +251,14 @@ pub trait ThreadOps: DiscordContext {
     /// # Permissions
     /// Requires MANAGE_THREADS or be the thread creator.
     async fn unarchive_thread(&self, channel_id: &ChannelId) -> Result<Channel> {
-        self.edit_thread(channel_id, EditThreadRequest { archived: Some(false), ..Default::default() }).await
+        self.edit_thread(
+            channel_id,
+            EditThreadRequest {
+                archived: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     /// Get a single thread member.
@@ -195,8 +272,19 @@ pub trait ThreadOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure (e.g. 404 if the user is
     /// not a member of the thread).
-    async fn get_thread_member(&self, channel_id: &ChannelId, user_id: &UserId, with_member: bool) -> Result<ThreadMember> {
-        self.http().get(Route::GetThreadMember { channel_id: channel_id.get(), user_id: user_id.get(), with_member }).await
+    async fn get_thread_member(
+        &self,
+        channel_id: &ChannelId,
+        user_id: &UserId,
+        with_member: bool,
+    ) -> Result<ThreadMember> {
+        self.http()
+            .get(Route::GetThreadMember {
+                channel_id: channel_id.get(),
+                user_id: user_id.get(),
+                with_member,
+            })
+            .await
     }
 
     /// List members of a thread (single page).
@@ -213,8 +301,21 @@ pub trait ThreadOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn list_thread_members(&self, channel_id: &ChannelId, with_member: bool, after: Option<u64>, limit: Option<u32>) -> Result<Vec<ThreadMember>> {
-        self.http().get(Route::ListThreadMembers { channel_id: channel_id.get(), with_member, after, limit }).await
+    async fn list_thread_members(
+        &self,
+        channel_id: &ChannelId,
+        with_member: bool,
+        after: Option<u64>,
+        limit: Option<u32>,
+    ) -> Result<Vec<ThreadMember>> {
+        self.http()
+            .get(Route::ListThreadMembers {
+                channel_id: channel_id.get(),
+                with_member,
+                after,
+                limit,
+            })
+            .await
     }
 
     /// List every member of a thread, automatically paginating.
@@ -232,18 +333,27 @@ pub trait ThreadOps: DiscordContext {
     ///
     /// # Errors
     /// Returns the first [`DiscordError::Http`] encountered while paging.
-    async fn list_all_thread_members(&self, channel_id: &ChannelId, with_member: bool) -> Result<Vec<ThreadMember>> {
+    async fn list_all_thread_members(
+        &self,
+        channel_id: &ChannelId,
+        with_member: bool,
+    ) -> Result<Vec<ThreadMember>> {
         let mut all: Vec<ThreadMember> = Vec::new();
         let mut after: Option<u64> = None;
         loop {
-            let page = self.list_thread_members(channel_id, with_member, after, Some(100)).await?;
+            let page = self
+                .list_thread_members(channel_id, with_member, after, Some(100))
+                .await?;
             let page_len = page.len();
 
             // Find the largest numeric user_id on this page to use as the
             // next cursor. Discord returns members ordered by user_id
             // ascending, so the last entry usually carries the max — but we
             // scan to be defensive against unordered responses.
-            let next_after: Option<u64> = page.iter().filter_map(|m| m.user_id.as_deref().and_then(|s| s.parse::<u64>().ok())).max();
+            let next_after: Option<u64> = page
+                .iter()
+                .filter_map(|m| m.user_id.as_deref().and_then(|s| s.parse::<u64>().ok()))
+                .max();
 
             all.extend(page);
 
@@ -271,8 +381,19 @@ pub trait ThreadOps: DiscordContext {
     ///
     /// # Permissions
     /// Requires READ_MESSAGE_HISTORY in the parent channel.
-    async fn list_public_archived_threads(&self, channel_id: &ChannelId, before: Option<&str>, limit: Option<u32>) -> Result<ArchivedThreadsResponse> {
-        self.http().get(Route::PublicArchivedThreads { channel_id: channel_id.get(), before: before.map(|s| Cow::Owned(s.to_string())), limit }).await
+    async fn list_public_archived_threads(
+        &self,
+        channel_id: &ChannelId,
+        before: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<ArchivedThreadsResponse> {
+        self.http()
+            .get(Route::PublicArchivedThreads {
+                channel_id: channel_id.get(),
+                before: before.map(|s| Cow::Owned(s.to_string())),
+                limit,
+            })
+            .await
     }
 
     /// List private archived threads in a channel.
@@ -288,8 +409,19 @@ pub trait ThreadOps: DiscordContext {
     /// # Permissions
     /// Requires READ_MESSAGE_HISTORY *and* MANAGE_THREADS on the parent
     /// channel.
-    async fn list_private_archived_threads(&self, channel_id: &ChannelId, before: Option<&str>, limit: Option<u32>) -> Result<ArchivedThreadsResponse> {
-        self.http().get(Route::PrivateArchivedThreads { channel_id: channel_id.get(), before: before.map(|s| Cow::Owned(s.to_string())), limit }).await
+    async fn list_private_archived_threads(
+        &self,
+        channel_id: &ChannelId,
+        before: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<ArchivedThreadsResponse> {
+        self.http()
+            .get(Route::PrivateArchivedThreads {
+                channel_id: channel_id.get(),
+                before: before.map(|s| Cow::Owned(s.to_string())),
+                limit,
+            })
+            .await
     }
 
     /// List private archived threads the current user has joined.
@@ -306,8 +438,19 @@ pub trait ThreadOps: DiscordContext {
     /// Requires READ_MESSAGE_HISTORY on the parent channel. MANAGE_THREADS is
     /// not required because the listing is scoped to the current user's
     /// memberships.
-    async fn list_joined_private_archived_threads(&self, channel_id: &ChannelId, before: Option<u64>, limit: Option<u32>) -> Result<ArchivedThreadsResponse> {
-        self.http().get(Route::JoinedPrivateArchivedThreads { channel_id: channel_id.get(), before, limit }).await
+    async fn list_joined_private_archived_threads(
+        &self,
+        channel_id: &ChannelId,
+        before: Option<u64>,
+        limit: Option<u32>,
+    ) -> Result<ArchivedThreadsResponse> {
+        self.http()
+            .get(Route::JoinedPrivateArchivedThreads {
+                channel_id: channel_id.get(),
+                before,
+                limit,
+            })
+            .await
     }
 
     /// Start a thread in a forum or media channel.
@@ -327,7 +470,15 @@ pub trait ThreadOps: DiscordContext {
     ///
     /// # Permissions
     /// Requires SEND_MESSAGES in the parent forum/media channel.
-    async fn start_thread_in_forum_channel(&self, channel_id: &ChannelId, name: String, auto_archive_duration: Option<u32>, rate_limit_per_user: Option<u32>, message: ForumThreadMessage, applied_tags: Option<Vec<String>>) -> Result<ForumThreadResponse> {
+    async fn start_thread_in_forum_channel(
+        &self,
+        channel_id: &ChannelId,
+        name: String,
+        auto_archive_duration: Option<u32>,
+        rate_limit_per_user: Option<u32>,
+        message: ForumThreadMessage,
+        applied_tags: Option<Vec<String>>,
+    ) -> Result<ForumThreadResponse> {
         // We build an inline JSON body rather than reusing CreateThreadRequest
         // so the typed `message: ForumThreadMessage` survives serialization
         // (CreateThreadRequest declares `message` as `serde_json::Value`,
@@ -353,6 +504,13 @@ pub trait ThreadOps: DiscordContext {
             applied_tags,
         };
 
-        self.http().post(Route::StartThreadInForumChannel { channel_id: channel_id.get() }, body).await
+        self.http()
+            .post(
+                Route::StartThreadInForumChannel {
+                    channel_id: channel_id.get(),
+                },
+                body,
+            )
+            .await
     }
 }

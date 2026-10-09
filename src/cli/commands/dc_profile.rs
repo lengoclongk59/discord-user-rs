@@ -28,11 +28,28 @@ pub async fn run(ctx: &Ctx, user_id: Option<&str>) -> Result<()> {
 
     let mut rows: Vec<Vec<String>> = vec![
         vec!["ID".into(), user.map(|u| u.id.clone()).unwrap_or_default()],
-        vec!["Username".into(), user.map(|u| format!("@{}", u.username)).unwrap_or_default()],
-        vec!["Display Name".into(), user.and_then(|u| u.global_name.clone()).unwrap_or_default()],
-        vec!["Bio".into(), profile_data.and_then(|p| p.bio.clone()).unwrap_or_default()],
-        vec!["Pronouns".into(), profile_data.and_then(|p| p.pronouns.clone()).unwrap_or_default()],
-        vec!["Premium Since".into(), profile.premium_since.clone().unwrap_or_default()],
+        vec![
+            "Username".into(),
+            user.map(|u| format!("@{}", u.username)).unwrap_or_default(),
+        ],
+        vec![
+            "Display Name".into(),
+            user.and_then(|u| u.global_name.clone()).unwrap_or_default(),
+        ],
+        vec![
+            "Bio".into(),
+            profile_data.and_then(|p| p.bio.clone()).unwrap_or_default(),
+        ],
+        vec![
+            "Pronouns".into(),
+            profile_data
+                .and_then(|p| p.pronouns.clone())
+                .unwrap_or_default(),
+        ],
+        vec![
+            "Premium Since".into(),
+            profile.premium_since.clone().unwrap_or_default(),
+        ],
     ];
 
     if !profile.connected_accounts.is_empty() {
@@ -51,7 +68,10 @@ pub async fn run(ctx: &Ctx, user_id: Option<&str>) -> Result<()> {
     }
 
     if !profile.mutual_guilds.is_empty() {
-        rows.push(vec!["Mutual Guilds".into(), profile.mutual_guilds.len().to_string()]);
+        rows.push(vec![
+            "Mutual Guilds".into(),
+            profile.mutual_guilds.len().to_string(),
+        ]);
     }
 
     output::print_table(&["Field", "Value"], &rows);

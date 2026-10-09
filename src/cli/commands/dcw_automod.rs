@@ -192,10 +192,7 @@ pub async fn dispatch(ctx: &Ctx, cmd: AutomodCmd) -> Result<()> {
             body.insert("event_type".into(), serde_json::json!(event_type));
             body.insert("trigger_type".into(), serde_json::json!(trigger_type));
             // Minimal default action: BLOCK_MESSAGE (type 1).
-            body.insert(
-                "actions".into(),
-                serde_json::json!([{ "type": 1 }]),
-            );
+            body.insert("actions".into(), serde_json::json!([{ "type": 1 }]));
             body.insert("enabled".into(), serde_json::json!(enabled));
             if let Some(meta) =
                 build_trigger_metadata(keyword.as_deref(), preset.as_deref(), mention_limit)?
@@ -203,7 +200,10 @@ pub async fn dispatch(ctx: &Ctx, cmd: AutomodCmd) -> Result<()> {
                 body.insert("trigger_metadata".into(), meta);
             }
             if let Some(roles) = exempt_roles {
-                body.insert("exempt_roles".into(), serde_json::json!(parse_id_list(&roles)?));
+                body.insert(
+                    "exempt_roles".into(),
+                    serde_json::json!(parse_id_list(&roles)?),
+                );
             }
             if let Some(channels) = exempt_channels {
                 body.insert(
@@ -254,7 +254,10 @@ pub async fn dispatch(ctx: &Ctx, cmd: AutomodCmd) -> Result<()> {
                 body.insert("trigger_metadata".into(), meta);
             }
             if let Some(roles) = exempt_roles {
-                body.insert("exempt_roles".into(), serde_json::json!(parse_id_list(&roles)?));
+                body.insert(
+                    "exempt_roles".into(),
+                    serde_json::json!(parse_id_list(&roles)?),
+                );
             }
             if let Some(channels) = exempt_channels {
                 body.insert(

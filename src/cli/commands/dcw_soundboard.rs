@@ -92,7 +92,10 @@ pub enum SoundboardCmd {
 /// Validate a playback volume is within Discord's 0.0–1.0 range.
 fn validate_volume(volume: f64) -> Result<()> {
     if !(0.0..=1.0).contains(&volume) {
-        return Err(anyhow!("volume must be between 0.0 and 1.0 (got {})", volume));
+        return Err(anyhow!(
+            "volume must be between 0.0 and 1.0 (got {})",
+            volume
+        ));
     }
     Ok(())
 }
@@ -151,7 +154,10 @@ pub async fn dispatch(ctx: &Ctx, cmd: SoundboardCmd) -> Result<()> {
             if ctx.json {
                 output::print_json(&result);
             } else {
-                let id = result.get("sound_id").and_then(|v| v.as_str()).unwrap_or("?");
+                let id = result
+                    .get("sound_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
                 output::success(&format!(
                     "Created soundboard sound '{}' (id={}) in guild {}",
                     name, id, guild

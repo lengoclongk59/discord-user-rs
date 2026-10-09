@@ -22,28 +22,29 @@ pub trait VoiceOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
     async fn get_guild_voice_regions(&self, guild_id: &GuildId) -> Result<Vec<VoiceRegion>> {
-        self.http().get(Route::GetGuildVoiceRegions { guild_id: guild_id.get() }).await
+        self.http()
+            .get(Route::GetGuildVoiceRegions {
+                guild_id: guild_id.get(),
+            })
+            .await
     }
 
     /// Get the current user's voice state in a guild.
     ///
     /// `GET /guilds/{guild.id}/voice-states/@me`
-    async fn get_current_user_voice_state(
-        &self,
-        guild_id: u64,
-    ) -> Result<serde_json::Value> {
-        self.http().get(crate::route::Route::GetCurrentUserVoiceState { guild_id }).await
+    async fn get_current_user_voice_state(&self, guild_id: u64) -> Result<serde_json::Value> {
+        self.http()
+            .get(crate::route::Route::GetCurrentUserVoiceState { guild_id })
+            .await
     }
 
     /// Get another user's voice state in a guild.
     ///
     /// `GET /guilds/{guild.id}/voice-states/{user.id}`
-    async fn get_user_voice_state(
-        &self,
-        guild_id: u64,
-        user_id: u64,
-    ) -> Result<serde_json::Value> {
-        self.http().get(crate::route::Route::GetUserVoiceState { guild_id, user_id }).await
+    async fn get_user_voice_state(&self, guild_id: u64, user_id: u64) -> Result<serde_json::Value> {
+        self.http()
+            .get(crate::route::Route::GetUserVoiceState { guild_id, user_id })
+            .await
     }
 
     /// Edit the current user's voice state in a guild.
@@ -54,8 +55,19 @@ pub trait VoiceOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn edit_my_voice_state(&self, guild_id: &GuildId, req: EditVoiceStateRequest) -> Result<()> {
-        self.http().patch_no_response(Route::EditMyVoiceState { guild_id: guild_id.get() }, req).await
+    async fn edit_my_voice_state(
+        &self,
+        guild_id: &GuildId,
+        req: EditVoiceStateRequest,
+    ) -> Result<()> {
+        self.http()
+            .patch_no_response(
+                Route::EditMyVoiceState {
+                    guild_id: guild_id.get(),
+                },
+                req,
+            )
+            .await
     }
 
     /// Edit another user's voice state in a guild.
@@ -65,7 +77,20 @@ pub trait VoiceOps: DiscordContext {
     ///
     /// # Permissions
     /// Requires MUTE_MEMBERS permission.
-    async fn edit_voice_state(&self, guild_id: &GuildId, user_id: &UserId, req: EditVoiceStateRequest) -> Result<()> {
-        self.http().patch_no_response(Route::EditVoiceState { guild_id: guild_id.get(), user_id: user_id.get() }, req).await
+    async fn edit_voice_state(
+        &self,
+        guild_id: &GuildId,
+        user_id: &UserId,
+        req: EditVoiceStateRequest,
+    ) -> Result<()> {
+        self.http()
+            .patch_no_response(
+                Route::EditVoiceState {
+                    guild_id: guild_id.get(),
+                    user_id: user_id.get(),
+                },
+                req,
+            )
+            .await
     }
 }

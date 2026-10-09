@@ -38,22 +38,26 @@ pub async fn run(ctx: &Ctx) -> Result<()> {
                 None => "?".to_string(),
             };
             // Group DMs may carry a `name`; DMs name themselves by recipient.
-            let label = c["name"].as_str().filter(|s| !s.is_empty()).map(String::from).unwrap_or_else(|| {
-                c["recipients"]
-                    .as_array()
-                    .map(|rs| {
-                        rs.iter()
-                            .filter_map(|r| {
-                                r["global_name"]
-                                    .as_str()
-                                    .filter(|s| !s.is_empty())
-                                    .or_else(|| r["username"].as_str())
-                            })
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    })
-                    .unwrap_or_default()
-            });
+            let label = c["name"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .unwrap_or_else(|| {
+                    c["recipients"]
+                        .as_array()
+                        .map(|rs| {
+                            rs.iter()
+                                .filter_map(|r| {
+                                    r["global_name"]
+                                        .as_str()
+                                        .filter(|s| !s.is_empty())
+                                        .or_else(|| r["username"].as_str())
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default()
+                });
             vec![id, kind, label]
         })
         .collect();

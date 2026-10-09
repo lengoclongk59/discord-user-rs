@@ -41,6 +41,7 @@ pub struct Cli {
 }
 
 #[derive(Subcommand, Debug)]
+#[allow(clippy::large_enum_variant)] // parsed once per process
 pub enum Cmd {
     /// Auto-discover and (optionally) save the Discord user token
     Auth(AuthArgs),

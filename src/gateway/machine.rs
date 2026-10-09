@@ -64,7 +64,12 @@ pub enum ReconnectCause {
 /// - Anything else: the current backoff.
 ///
 /// `rand` is a draw in `0.0..=1.0`, passed in so the result is deterministic.
-pub fn plan_reconnect(cause: ReconnectCause, backoff: Duration, session_held: bool, rand: f64) -> (Duration, Duration) {
+pub fn plan_reconnect(
+    cause: ReconnectCause,
+    backoff: Duration,
+    session_held: bool,
+    rand: f64,
+) -> (Duration, Duration) {
     let next = (backoff * 2).min(BACKOFF_MAX);
     let wait = match cause {
         ReconnectCause::Identify => {
@@ -82,7 +87,11 @@ pub fn plan_reconnect(cause: ReconnectCause, backoff: Duration, session_held: bo
 pub(crate) enum Action {
     /// A frame was decoded. Always the first action of [`GatewayCore::frame`],
     /// so the raw frame reaches the event stream before anything it causes.
-    Received { op: u8, s: Option<u64>, t: Option<String> },
+    Received {
+        op: u8,
+        s: Option<u64>,
+        t: Option<String>,
+    },
     /// The connection reached READY or RESUMED.
     Live,
     /// Write this text frame to the socket.
@@ -94,7 +103,10 @@ pub(crate) enum Action {
     /// subscribers.
     Dispatch { event_type: String, data: Value },
     /// End this connection and open a new one.
-    Reconnect { cause: ReconnectCause, reason: &'static str },
+    Reconnect {
+        cause: ReconnectCause,
+        reason: &'static str,
+    },
 }
 
 /// The state of one gateway session across its connections.
@@ -214,7 +226,12 @@ impl GatewayCore {
 
     /// How long to wait before the next connect, advancing the ladder.
     /// `planner` has the shape of [`plan_reconnect`].
-    pub(crate) fn reconnect_delay(&mut self, cause: ReconnectCause, rand: f64, planner: impl FnOnce(ReconnectCause, Duration, bool, f64) -> (Duration, Duration)) -> Duration {
+    pub(crate) fn reconnect_delay(
+        &mut self,
+        cause: ReconnectCause,
+        rand: f64,
+        planner: impl FnOnce(ReconnectCause, Duration, bool, f64) -> (Duration, Duration),
+    ) -> Duration {
         let (wait, next) = planner(cause, self.backoff, self.has_session(), rand);
         self.backoff = next;
         wait
@@ -237,11 +254,15 @@ impl GatewayCore {
 
     /// The earliest instant at which [`Self::tick`] has work to do.
     pub(crate) fn next_deadline(&self) -> Option<Instant> {
-        [self.read_deadline(), self.next_heartbeat].into_iter().flatten().min()
+        [self.read_deadline(), self.next_heartbeat]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     fn read_deadline(&self) -> Option<Instant> {
-        self.last_frame_at.map(|at| at + self.heartbeat_interval * 2)
+        self.last_frame_at
+            .map(|at| at + self.heartbeat_interval * 2)
     }
 
     /// Handle one inbound text frame.
@@ -258,7 +279,11 @@ impl GatewayCore {
             self.seq = Some(s);
         }
 
-        let mut actions = vec![Action::Received { op: payload.op, s: payload.s, t: payload.t.clone() }];
+        let mut actions = vec![Action::Received {
+            op: payload.op,
+            s: payload.s,
+            t: payload.t.clone(),
+        }];
         match Opcode::from(payload.op) {
             Opcode::Hello => {
                 self.on_hello(payload.d.as_ref(), now, rand);
@@ -294,19 +319,28 @@ impl GatewayCore {
             }
             Opcode::Reconnect => {
                 warn!("Received reconnect request (op 7)");
-                actions.push(Action::Reconnect { cause: ReconnectCause::Resume, reason: "op 7 reconnect" });
+                actions.push(Action::Reconnect {
+                    cause: ReconnectCause::Resume,
+                    reason: "op 7 reconnect",
+                });
             }
             Opcode::InvalidSession => {
                 let resumable = payload.d.as_ref().and_then(Value::as_bool).unwrap_or(false);
                 warn!(resumable, "Received Invalid Session (op 9)");
                 if resumable && self.has_session() {
-                    actions.push(Action::Reconnect { cause: ReconnectCause::Resume, reason: "op 9 resumable" });
+                    actions.push(Action::Reconnect {
+                        cause: ReconnectCause::Resume,
+                        reason: "op 9 resumable",
+                    });
                 } else {
                     if resumable {
                         warn!("Op 9 said resumable but no session is held; identifying instead");
                     }
                     self.clear_session();
-                    actions.push(Action::Reconnect { cause: ReconnectCause::Identify, reason: "op 9 not resumable" });
+                    actions.push(Action::Reconnect {
+                        cause: ReconnectCause::Identify,
+                        reason: "op 9 not resumable",
+                    });
                 }
             }
             opcode => debug!("Received opcode: {:?}", opcode),
@@ -344,9 +378,14 @@ impl GatewayCore {
                         debug!("Captured session_id: {}", sid);
                         self.session_id = Some(sid.to_string());
                     }
-                    self.resume_url = d["resume_gateway_url"].as_str().map(|url| with_query_of(url, &self.base_url));
+                    self.resume_url = d["resume_gateway_url"]
+                        .as_str()
+                        .map(|url| with_query_of(url, &self.base_url));
                     self.pending_guilds = d["guilds"].as_array().map_or(0, Vec::len);
-                    debug!("READY: waiting for {} GUILD_CREATE(s) before CACHE_READY", self.pending_guilds);
+                    debug!(
+                        "READY: waiting for {} GUILD_CREATE(s) before CACHE_READY",
+                        self.pending_guilds
+                    );
                     cache_is_ready = self.pending_guilds == 0;
                 }
             }
@@ -367,7 +406,10 @@ impl GatewayCore {
             }
             _ => {}
         }
-        actions.push(Action::Dispatch { event_type, data: d.unwrap_or(Value::Null) });
+        actions.push(Action::Dispatch {
+            event_type,
+            data: d.unwrap_or(Value::Null),
+        });
         if cache_is_ready {
             actions.push(cache_ready());
         }
@@ -377,7 +419,10 @@ impl GatewayCore {
     pub(crate) fn tick(&mut self, now: Instant, _rand: f64) -> Vec<Action> {
         if self.read_deadline().is_some_and(|at| now >= at) {
             warn!(read_timeout = ?self.heartbeat_interval * 2, "No gateway frame within the read timeout; the connection may be dead");
-            return vec![Action::Reconnect { cause: ReconnectCause::Failure, reason: "read timeout" }];
+            return vec![Action::Reconnect {
+                cause: ReconnectCause::Failure,
+                reason: "read timeout",
+            }];
         }
 
         let mut actions = Vec::new();
@@ -387,11 +432,18 @@ impl GatewayCore {
                     // Discord's zombie rule: no ACK since the last heartbeat
                     // means the connection is dead, whatever the socket says.
                     warn!("Previous heartbeat was never acknowledged; treating the connection as a zombie");
-                    return vec![Action::Reconnect { cause: ReconnectCause::Failure, reason: "heartbeat not acknowledged" }];
+                    return vec![Action::Reconnect {
+                        cause: ReconnectCause::Failure,
+                        reason: "heartbeat not acknowledged",
+                    }];
                 }
                 actions.push(self.beat(now));
                 let next = due + self.heartbeat_interval;
-                self.next_heartbeat = Some(if next > now { next } else { now + self.heartbeat_interval });
+                self.next_heartbeat = Some(if next > now {
+                    next
+                } else {
+                    now + self.heartbeat_interval
+                });
             }
         }
         actions
@@ -431,7 +483,10 @@ impl GatewayCore {
 /// `Authorization` header (see `client::DiscordHttpClient::auth_header_value`),
 /// so it is stripped here for gateway payloads only.
 pub(crate) fn gateway_token(token: &str) -> &str {
-    token.strip_prefix("Bot ").or_else(|| token.strip_prefix("Bearer ")).unwrap_or(token)
+    token
+        .strip_prefix("Bot ")
+        .or_else(|| token.strip_prefix("Bearer "))
+        .unwrap_or(token)
 }
 
 /// `url` with `base`'s query string, unless `url` already has one.
@@ -439,7 +494,9 @@ pub(crate) fn gateway_token(token: &str) -> &str {
 /// READY's `resume_gateway_url` is a bare host, and a connection to it must
 /// carry the same `encoding` / `v` / `compress` parameters as the first one.
 fn with_query_of(url: &str, base: &str) -> String {
-    let query = url::Url::parse(base).ok().and_then(|b| b.query().map(str::to_owned));
+    let query = url::Url::parse(base)
+        .ok()
+        .and_then(|b| b.query().map(str::to_owned));
     match (url::Url::parse(url), query) {
         (Ok(mut parsed), Some(query)) if parsed.query().is_none() => {
             parsed.set_query(Some(&query));
@@ -450,7 +507,10 @@ fn with_query_of(url: &str, base: &str) -> String {
 }
 
 fn cache_ready() -> Action {
-    Action::Dispatch { event_type: "CACHE_READY".to_string(), data: Value::Null }
+    Action::Dispatch {
+        event_type: "CACHE_READY".to_string(),
+        data: Value::Null,
+    }
 }
 
 #[cfg(test)]
@@ -476,7 +536,11 @@ mod tests {
     }
 
     fn ready(session: &str) -> String {
-        dispatch("READY", 1, json!({ "session_id": session, "resume_gateway_url": "wss://resume.example", "guilds": [] }))
+        dispatch(
+            "READY",
+            1,
+            json!({ "session_id": session, "resume_gateway_url": "wss://resume.example", "guilds": [] }),
+        )
     }
 
     /// A core that has opened a socket at `t0` and received HELLO, with the
@@ -486,14 +550,20 @@ mod tests {
         let mut core = GatewayCore::new(URL.to_string(), "tok".to_string());
         core.connecting();
         core.opened(t0);
-        assert_eq!(frame(&mut core, &hello(interval_ms), t0, 1.0), vec![Action::Identify]);
+        assert_eq!(
+            frame(&mut core, &hello(interval_ms), t0, 1.0),
+            vec![Action::Identify]
+        );
         (core, t0)
     }
 
     /// The core's actions for one frame, minus the bookkeeping ones
     /// (`Received`, `Live`) that only feed the event stream.
     fn frame(core: &mut GatewayCore, text: &str, now: Instant, rand: f64) -> Vec<Action> {
-        core.frame(text, now, rand).into_iter().filter(|a| !matches!(a, Action::Received { .. } | Action::Live)).collect()
+        core.frame(text, now, rand)
+            .into_iter()
+            .filter(|a| !matches!(a, Action::Received { .. } | Action::Live))
+            .collect()
     }
 
     fn sends_op(action: &Action, op: u64) -> bool {
@@ -506,9 +576,26 @@ mod tests {
         let mut core = GatewayCore::new(URL.to_string(), "tok".to_string());
         core.opened(t0);
         let actions = core.frame(&hello(45_000), t0, 1.0);
-        assert_eq!(actions, vec![Action::Received { op: 10, s: None, t: None }, Action::Identify]);
+        assert_eq!(
+            actions,
+            vec![
+                Action::Received {
+                    op: 10,
+                    s: None,
+                    t: None
+                },
+                Action::Identify
+            ]
+        );
         let actions = core.frame(&ready("sess"), t0, 0.5);
-        assert_eq!(actions[0], Action::Received { op: 0, s: Some(1), t: Some("READY".to_string()) });
+        assert_eq!(
+            actions[0],
+            Action::Received {
+                op: 0,
+                s: Some(1),
+                t: Some("READY".to_string())
+            }
+        );
         assert_eq!(actions[1], Action::Live);
         let actions = core.frame(&dispatch("RESUMED", 2, json!({})), t0, 0.5);
         assert_eq!(actions[1], Action::Live);
@@ -538,7 +625,9 @@ mod tests {
         let (mut core, t0) = after_hello(45_000);
         let actions = frame(&mut core, &ready("sess"), t0, 0.5);
         assert_eq!(actions.len(), 2);
-        assert!(matches!(&actions[0], Action::Dispatch { event_type, .. } if event_type == "READY"));
+        assert!(
+            matches!(&actions[0], Action::Dispatch { event_type, .. } if event_type == "READY")
+        );
         assert_eq!(actions[1], cache_ready(), "CACHE_READY follows READY");
         assert_eq!(core.stage(), ConnectionStage::Connected);
         assert_eq!(core.session_id(), Some("sess"));
@@ -548,13 +637,38 @@ mod tests {
     #[test]
     fn cache_ready_waits_for_every_guild() {
         let (mut core, t0) = after_hello(45_000);
-        frame(&mut core, &dispatch("READY", 1, json!({ "session_id": "s", "guilds": [{ "id": "1" }, { "id": "2" }] })), t0, 0.5);
-        let first = frame(&mut core, &dispatch("GUILD_CREATE", 2, json!({ "id": "1" })), t0, 0.5);
+        frame(
+            &mut core,
+            &dispatch(
+                "READY",
+                1,
+                json!({ "session_id": "s", "guilds": [{ "id": "1" }, { "id": "2" }] }),
+            ),
+            t0,
+            0.5,
+        );
+        let first = frame(
+            &mut core,
+            &dispatch("GUILD_CREATE", 2, json!({ "id": "1" })),
+            t0,
+            0.5,
+        );
         assert_eq!(first.len(), 1);
-        let second = frame(&mut core, &dispatch("GUILD_CREATE", 3, json!({ "id": "2" })), t0, 0.5);
+        let second = frame(
+            &mut core,
+            &dispatch("GUILD_CREATE", 3, json!({ "id": "2" })),
+            t0,
+            0.5,
+        );
         assert_eq!(second.len(), 2);
-        assert!(matches!(&second[0], Action::Dispatch { event_type, .. } if event_type == "GUILD_CREATE"));
-        assert_eq!(second[1], cache_ready(), "CACHE_READY follows the last GUILD_CREATE");
+        assert!(
+            matches!(&second[0], Action::Dispatch { event_type, .. } if event_type == "GUILD_CREATE")
+        );
+        assert_eq!(
+            second[1],
+            cache_ready(),
+            "CACHE_READY follows the last GUILD_CREATE"
+        );
     }
 
     #[test]
@@ -566,7 +680,9 @@ mod tests {
         core.opened(t1);
         let actions = frame(&mut core, &hello(45_000), t1, 1.0);
         assert_eq!(actions.len(), 1);
-        let Action::Send(text) = &actions[0] else { panic!("expected RESUME, got {actions:?}") };
+        let Action::Send(text) = &actions[0] else {
+            panic!("expected RESUME, got {actions:?}")
+        };
         let v: Value = serde_json::from_str(text).unwrap();
         assert_eq!(v["op"], 6);
         assert_eq!(v["d"]["session_id"], "sess");
@@ -584,8 +700,13 @@ mod tests {
         frame(&mut core, &ready("sess"), t0, 0.5);
         core.connection_lost(false);
         core.opened(t0);
-        let Action::Send(text) = &frame(&mut core, &hello(45_000), t0, 1.0)[0] else { panic!("expected RESUME") };
-        assert_eq!(serde_json::from_str::<Value>(text).unwrap()["d"]["token"], "tok");
+        let Action::Send(text) = &frame(&mut core, &hello(45_000), t0, 1.0)[0] else {
+            panic!("expected RESUME")
+        };
+        assert_eq!(
+            serde_json::from_str::<Value>(text).unwrap()["d"]["token"],
+            "tok"
+        );
     }
 
     #[test]
@@ -601,9 +722,17 @@ mod tests {
     #[test]
     fn heartbeat_carries_the_latest_sequence() {
         let (mut core, t0) = after_hello(1_000);
-        frame(&mut core, &dispatch("MESSAGE_CREATE", 42, json!({})), t0, 0.5);
+        frame(
+            &mut core,
+            &dispatch("MESSAGE_CREATE", 42, json!({})),
+            t0,
+            0.5,
+        );
         assert!(core.tick(t0 + ms(999), 0.5).is_empty());
-        assert_eq!(core.tick(t0 + ms(1_000), 0.5), vec![Action::Send(json!({ "op": 1, "d": 42 }).to_string())]);
+        assert_eq!(
+            core.tick(t0 + ms(1_000), 0.5),
+            vec![Action::Send(json!({ "op": 1, "d": 42 }).to_string())]
+        );
     }
 
     #[test]
@@ -628,9 +757,22 @@ mod tests {
     #[test]
     fn heartbeat_request_is_answered_at_once_and_restarts_the_schedule() {
         let (mut core, t0) = after_hello(1_000);
-        frame(&mut core, &dispatch("MESSAGE_CREATE", 7, json!({})), t0, 0.5);
-        let actions = frame(&mut core, &json!({ "op": 1, "d": null }).to_string(), t0 + ms(300), 0.5);
-        assert_eq!(actions, vec![Action::Send(json!({ "op": 1, "d": 7 }).to_string())]);
+        frame(
+            &mut core,
+            &dispatch("MESSAGE_CREATE", 7, json!({})),
+            t0,
+            0.5,
+        );
+        let actions = frame(
+            &mut core,
+            &json!({ "op": 1, "d": null }).to_string(),
+            t0 + ms(300),
+            0.5,
+        );
+        assert_eq!(
+            actions,
+            vec![Action::Send(json!({ "op": 1, "d": 7 }).to_string())]
+        );
         frame(&mut core, &ack(), t0 + ms(330), 0.5);
         assert_eq!(core.latency(), Some(ms(30)));
         // The beat just sent replaces the one that was due at 1000 ms.
@@ -641,7 +783,16 @@ mod tests {
     #[test]
     fn heartbeat_request_just_before_a_tick_is_not_a_zombie() {
         let (mut core, t0) = after_hello(1_000);
-        assert_eq!(frame(&mut core, &json!({ "op": 1 }).to_string(), t0 + ms(990), 0.5).len(), 1);
+        assert_eq!(
+            frame(
+                &mut core,
+                &json!({ "op": 1 }).to_string(),
+                t0 + ms(990),
+                0.5
+            )
+            .len(),
+            1
+        );
         // The scheduled tick lands before the ACK of the requested beat can.
         assert!(core.tick(t0 + ms(1_000), 0.5).is_empty());
         frame(&mut core, &ack(), t0 + ms(1_020), 0.5);
@@ -654,7 +805,10 @@ mod tests {
         let mut core = GatewayCore::new(URL.to_string(), "tok".to_string());
         core.opened(t0);
         let actions = frame(&mut core, &json!({ "op": 1 }).to_string(), t0, 0.5);
-        assert_eq!(actions, vec![Action::Send(json!({ "op": 1, "d": null }).to_string())]);
+        assert_eq!(
+            actions,
+            vec![Action::Send(json!({ "op": 1, "d": null }).to_string())]
+        );
         assert_eq!(core.next_heartbeat, None);
     }
 
@@ -662,7 +816,13 @@ mod tests {
     fn op_7_reconnects_with_a_resume_cause() {
         let (mut core, t0) = after_hello(45_000);
         let actions = frame(&mut core, &json!({ "op": 7 }).to_string(), t0, 0.5);
-        assert_eq!(actions, vec![Action::Reconnect { cause: ReconnectCause::Resume, reason: "op 7 reconnect" }]);
+        assert_eq!(
+            actions,
+            vec![Action::Reconnect {
+                cause: ReconnectCause::Resume,
+                reason: "op 7 reconnect"
+            }]
+        );
     }
 
     #[test]
@@ -673,7 +833,13 @@ mod tests {
         let timeout = DEFAULT_HEARTBEAT_INTERVAL * 2;
         assert_eq!(core.next_deadline(), Some(t0 + timeout));
         assert!(core.tick(t0 + timeout - ms(1), 0.5).is_empty());
-        assert_eq!(core.tick(t0 + timeout, 0.5), vec![Action::Reconnect { cause: ReconnectCause::Failure, reason: "read timeout" }]);
+        assert_eq!(
+            core.tick(t0 + timeout, 0.5),
+            vec![Action::Reconnect {
+                cause: ReconnectCause::Failure,
+                reason: "read timeout"
+            }]
+        );
     }
 
     #[test]
@@ -698,12 +864,18 @@ mod tests {
         assert_eq!(core.connect_url(), URL);
         frame(&mut core, &ready("sess"), t0, 0.5);
         core.connection_lost(false);
-        assert_eq!(core.connect_url(), "wss://resume.example/?encoding=json&v=9");
+        assert_eq!(
+            core.connect_url(),
+            "wss://resume.example/?encoding=json&v=9"
+        );
     }
 
     #[test]
     fn resume_url_keeps_its_own_query() {
-        assert_eq!(with_query_of("ws://127.0.0.1:9/?v=10", URL), "ws://127.0.0.1:9/?v=10");
+        assert_eq!(
+            with_query_of("ws://127.0.0.1:9/?v=10", URL),
+            "ws://127.0.0.1:9/?v=10"
+        );
         assert_eq!(with_query_of("not a url", URL), "not a url");
     }
 
@@ -714,9 +886,20 @@ mod tests {
         let (mut core, t0) = after_hello(1_000);
         assert!(sends_op(&core.tick(t0 + ms(1_000), 0.5)[0], 1));
         // A dispatch keeps the read timeout away, but no ACK comes.
-        frame(&mut core, &dispatch("TYPING_START", 2, json!({})), t0 + ms(1_500), 0.5);
+        frame(
+            &mut core,
+            &dispatch("TYPING_START", 2, json!({})),
+            t0 + ms(1_500),
+            0.5,
+        );
         assert!(core.tick(t0 + ms(1_999), 0.5).is_empty());
-        assert_eq!(core.tick(t0 + ms(2_000), 0.5), vec![Action::Reconnect { cause: ReconnectCause::Failure, reason: "heartbeat not acknowledged" }]);
+        assert_eq!(
+            core.tick(t0 + ms(2_000), 0.5),
+            vec![Action::Reconnect {
+                cause: ReconnectCause::Failure,
+                reason: "heartbeat not acknowledged"
+            }]
+        );
     }
 
     // ── G-4: op 9 reconnects instead of waiting on the reader ──
@@ -725,8 +908,19 @@ mod tests {
     fn resumable_op_9_reconnects_and_keeps_the_session() {
         let (mut core, t0) = after_hello(45_000);
         frame(&mut core, &ready("sess"), t0, 0.5);
-        let actions = frame(&mut core, &json!({ "op": 9, "d": true }).to_string(), t0, 0.5);
-        assert_eq!(actions, vec![Action::Reconnect { cause: ReconnectCause::Resume, reason: "op 9 resumable" }]);
+        let actions = frame(
+            &mut core,
+            &json!({ "op": 9, "d": true }).to_string(),
+            t0,
+            0.5,
+        );
+        assert_eq!(
+            actions,
+            vec![Action::Reconnect {
+                cause: ReconnectCause::Resume,
+                reason: "op 9 resumable"
+            }]
+        );
         assert!(core.has_session());
     }
 
@@ -734,8 +928,19 @@ mod tests {
     fn non_resumable_op_9_drops_the_session() {
         let (mut core, t0) = after_hello(45_000);
         frame(&mut core, &ready("sess"), t0, 0.5);
-        let actions = frame(&mut core, &json!({ "op": 9, "d": false }).to_string(), t0, 0.5);
-        assert_eq!(actions, vec![Action::Reconnect { cause: ReconnectCause::Identify, reason: "op 9 not resumable" }]);
+        let actions = frame(
+            &mut core,
+            &json!({ "op": 9, "d": false }).to_string(),
+            t0,
+            0.5,
+        );
+        assert_eq!(
+            actions,
+            vec![Action::Reconnect {
+                cause: ReconnectCause::Identify,
+                reason: "op 9 not resumable"
+            }]
+        );
         assert!(!core.has_session());
         assert_eq!(core.connect_url(), URL);
     }
@@ -743,8 +948,19 @@ mod tests {
     #[test]
     fn resumable_op_9_without_a_session_identifies() {
         let (mut core, t0) = after_hello(45_000);
-        let actions = frame(&mut core, &json!({ "op": 9, "d": true }).to_string(), t0, 0.5);
-        assert_eq!(actions, vec![Action::Reconnect { cause: ReconnectCause::Identify, reason: "op 9 not resumable" }]);
+        let actions = frame(
+            &mut core,
+            &json!({ "op": 9, "d": true }).to_string(),
+            t0,
+            0.5,
+        );
+        assert_eq!(
+            actions,
+            vec![Action::Reconnect {
+                cause: ReconnectCause::Identify,
+                reason: "op 9 not resumable"
+            }]
+        );
     }
 
     // ── G-5: the ladder applies to every cause, and resets only once stable ──
@@ -767,7 +983,11 @@ mod tests {
             ((Failure, s(40), true, 0.5), (s(40), s(60))),
         ];
         for ((cause, backoff, held, rand), want) in cases {
-            assert_eq!(plan_reconnect(cause, backoff, held, rand), want, "{cause:?} {backoff:?} {held} {rand}");
+            assert_eq!(
+                plan_reconnect(cause, backoff, held, rand),
+                want,
+                "{cause:?} {backoff:?} {held} {rand}"
+            );
         }
     }
 
@@ -785,7 +1005,9 @@ mod tests {
     fn ready_then_close_loop_climbs_the_ladder() {
         let t0 = Instant::now();
         let mut core = GatewayCore::new(URL.to_string(), "tok".to_string());
-        let waits: Vec<u64> = (0..8).map(|_| ready_then_close(&mut core, t0).as_secs()).collect();
+        let waits: Vec<u64> = (0..8)
+            .map(|_| ready_then_close(&mut core, t0).as_secs())
+            .collect();
         assert_eq!(waits, [1, 2, 4, 8, 16, 32, 60, 60]);
     }
 
@@ -803,7 +1025,10 @@ mod tests {
         frame(&mut core, &ack(), t0 + ms(1_010), 0.5);
         frame(&mut core, &ready("sess"), t0 + ms(1_020), 0.5);
         core.connection_lost(false);
-        assert_eq!(core.reconnect_delay(ReconnectCause::Failure, 0.5, plan_reconnect), Duration::from_secs(16));
+        assert_eq!(
+            core.reconnect_delay(ReconnectCause::Failure, 0.5, plan_reconnect),
+            Duration::from_secs(16)
+        );
 
         core.opened(t0);
         frame(&mut core, &hello(1_000), t0, 1.0);
@@ -811,6 +1036,9 @@ mod tests {
         core.tick(t0 + ms(1_000), 0.5);
         frame(&mut core, &ack(), t0 + ms(1_010), 0.5);
         core.connection_lost(false);
-        assert_eq!(core.reconnect_delay(ReconnectCause::Resume, 0.5, plan_reconnect), FAST_RECONNECT);
+        assert_eq!(
+            core.reconnect_delay(ReconnectCause::Resume, 0.5, plan_reconnect),
+            FAST_RECONNECT
+        );
     }
 }

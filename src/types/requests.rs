@@ -59,12 +59,26 @@ pub struct CreateAttachment {
 impl CreateAttachment {
     /// Create an attachment from raw bytes, inferring no MIME type.
     pub fn bytes(filename: impl Into<String>, data: Vec<u8>) -> Self {
-        Self { filename: filename.into(), data, mime_type: "application/octet-stream".to_string(), description: None }
+        Self {
+            filename: filename.into(),
+            data,
+            mime_type: "application/octet-stream".to_string(),
+            description: None,
+        }
     }
 
     /// Create an attachment and set an explicit MIME type.
-    pub fn with_mime(filename: impl Into<String>, data: Vec<u8>, mime_type: impl Into<String>) -> Self {
-        Self { filename: filename.into(), data, mime_type: mime_type.into(), description: None }
+    pub fn with_mime(
+        filename: impl Into<String>,
+        data: Vec<u8>,
+        mime_type: impl Into<String>,
+    ) -> Self {
+        Self {
+            filename: filename.into(),
+            data,
+            mime_type: mime_type.into(),
+            description: None,
+        }
     }
 
     /// Set alt-text description for this attachment (shown for images).
@@ -644,7 +658,10 @@ impl CreateInteractionResponseRequest {
     ///
     /// Mirrors serenity's `CreateInteractionResponse::Message(...)`.
     pub fn message(content: impl Into<String>) -> Self {
-        Self { response_type: 4, data: Some(serde_json::json!({ "content": content.into() })) }
+        Self {
+            response_type: 4,
+            data: Some(serde_json::json!({ "content": content.into() })),
+        }
     }
 
     /// Send an ephemeral (only-visible-to-invoker) message as the response
@@ -652,7 +669,10 @@ impl CreateInteractionResponseRequest {
     ///
     /// Mirrors serenity's `CreateInteractionResponseMessage::ephemeral(true)`.
     pub fn ephemeral(content: impl Into<String>) -> Self {
-        Self { response_type: 4, data: Some(serde_json::json!({ "content": content.into(), "flags": 64u64 })) }
+        Self {
+            response_type: 4,
+            data: Some(serde_json::json!({ "content": content.into(), "flags": 64u64 })),
+        }
     }
 
     /// Show a "thinking…" loading indicator; follow up with
@@ -660,7 +680,10 @@ impl CreateInteractionResponseRequest {
     ///
     /// Mirrors serenity's `CreateInteractionResponse::Defer(...)`.
     pub fn defer() -> Self {
-        Self { response_type: 5, data: None }
+        Self {
+            response_type: 5,
+            data: None,
+        }
     }
 
     /// Silently defer a component interaction (keeps the original message
@@ -668,12 +691,18 @@ impl CreateInteractionResponseRequest {
     ///
     /// Mirrors serenity's `CreateInteractionResponse::Acknowledge`.
     pub fn defer_update() -> Self {
-        Self { response_type: 6, data: None }
+        Self {
+            response_type: 6,
+            data: None,
+        }
     }
 
     /// Edit the original component message in-place (type 7).
     pub fn update_message(content: impl Into<String>) -> Self {
-        Self { response_type: 7, data: Some(serde_json::json!({ "content": content.into() })) }
+        Self {
+            response_type: 7,
+            data: Some(serde_json::json!({ "content": content.into() })),
+        }
     }
 
     /// Show a modal dialog (type 9).
@@ -683,7 +712,10 @@ impl CreateInteractionResponseRequest {
     ///
     /// Mirrors serenity's `CreateInteractionResponse::Modal(CreateModal)`.
     pub fn modal(modal_data: serde_json::Value) -> Self {
-        Self { response_type: 9, data: Some(modal_data) }
+        Self {
+            response_type: 9,
+            data: Some(modal_data),
+        }
     }
 }
 
@@ -783,7 +815,10 @@ impl AllowedMentions {
     /// Create a permissive default that pings users, roles, and @everyone
     /// (same as not sending `allowed_mentions` at all).
     pub fn new() -> Self {
-        Self { parse: vec!["roles".into(), "users".into(), "everyone".into()], ..Default::default() }
+        Self {
+            parse: vec!["roles".into(), "users".into(), "everyone".into()],
+            ..Default::default()
+        }
     }
 
     /// Create a restrictive default — no pings for anyone.
@@ -881,17 +916,26 @@ pub struct EditGuildMemberRequest {
 impl EditGuildMemberRequest {
     /// Change only the server nickname.
     pub fn nick(nick: impl Into<String>) -> Self {
-        Self { nick: Some(nick.into()), ..Default::default() }
+        Self {
+            nick: Some(nick.into()),
+            ..Default::default()
+        }
     }
 
     /// Move to a specific voice channel.
     pub fn move_to_channel(channel_id: impl Into<String>) -> Self {
-        Self { channel_id: Some(channel_id.into()), ..Default::default() }
+        Self {
+            channel_id: Some(channel_id.into()),
+            ..Default::default()
+        }
     }
 
     /// Disconnect from voice by clearing the channel.
     pub fn disconnect_voice() -> Self {
-        Self { channel_id: Some(String::new()), ..Default::default() }
+        Self {
+            channel_id: Some(String::new()),
+            ..Default::default()
+        }
     }
 }
 

@@ -253,7 +253,9 @@ pub async fn dispatch(ctx: &Ctx, cmd: MessageCmd) -> Result<()> {
         } => {
             // Discord caps the reactor list at 100 per request.
             let limit = limit.clamp(1, 100);
-            let v = api.msg_get_reactors(&channel, &message, &emoji, limit).await?;
+            let v = api
+                .msg_get_reactors(&channel, &message, &emoji, limit)
+                .await?;
             output::print_json(&v);
         }
 
@@ -264,12 +266,7 @@ pub async fn dispatch(ctx: &Ctx, cmd: MessageCmd) -> Result<()> {
             content,
         } => {
             let v = api
-                .msg_forward(
-                    &source_channel,
-                    &message,
-                    &dest_channel,
-                    content.as_deref(),
-                )
+                .msg_forward(&source_channel, &message, &dest_channel, content.as_deref())
                 .await?;
             if ctx.json {
                 output::print_json(&v);

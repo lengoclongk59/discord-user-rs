@@ -14,8 +14,7 @@ impl WriteApi {
         image_path: &str,
     ) -> Result<Value> {
         crate::cli::api::parse_snowflake(guild_id)?;
-        let bytes =
-            std::fs::read(image_path).with_context(|| format!("reading {}", image_path))?;
+        let bytes = std::fs::read(image_path).with_context(|| format!("reading {}", image_path))?;
         let mime = if image_path.ends_with(".gif") {
             "image/gif"
         } else if image_path.ends_with(".jpg") || image_path.ends_with(".jpeg") {
@@ -35,12 +34,7 @@ impl WriteApi {
             .map_err(|e| anyhow!(e.to_string()))
     }
 
-    pub async fn emoji_rename(
-        &self,
-        guild_id: &str,
-        emoji_id: &str,
-        name: &str,
-    ) -> Result<Value> {
+    pub async fn emoji_rename(&self, guild_id: &str, emoji_id: &str, name: &str) -> Result<Value> {
         crate::cli::api::parse_snowflake(guild_id)?;
         crate::cli::api::parse_snowflake(emoji_id)?;
         let body = json!({ "name": name });

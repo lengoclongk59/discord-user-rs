@@ -51,7 +51,7 @@ fn read_length_delimited<'a>(
     pos: &mut usize,
 ) -> Result<&'a [u8], ProtoDecodeError> {
     let len = read_varint(bytes, pos)? as usize;
-    if pos.checked_add(len).map_or(true, |end| end > bytes.len()) {
+    if pos.checked_add(len).is_none_or(|end| end > bytes.len()) {
         return Err(ProtoDecodeError::Truncated);
     }
     let slice = &bytes[*pos..*pos + len];
@@ -94,7 +94,9 @@ fn decode_string_value(bytes: &[u8]) -> Result<String, ProtoDecodeError> {
         let wire = (tag & 0x7) as u8;
         if field == 1 && wire == 2 {
             let raw = read_length_delimited(bytes, &mut pos)?;
-            out = std::str::from_utf8(raw).map_err(|_| ProtoDecodeError::InvalidUtf8)?.to_string();
+            out = std::str::from_utf8(raw)
+                .map_err(|_| ProtoDecodeError::InvalidUtf8)?
+                .to_string();
         } else {
             skip_field(bytes, &mut pos, wire)?;
         }
@@ -170,7 +172,13 @@ pub struct CustomStatus {
 
 impl CustomStatus {
     pub fn new(text: impl Into<String>) -> Self {
-        Self { text: text.into(), emoji_id: None, emoji_name: None, expires_at_ms: None, created_at_ms: None }
+        Self {
+            text: text.into(),
+            emoji_id: None,
+            emoji_name: None,
+            expires_at_ms: None,
+            created_at_ms: None,
+        }
     }
 
     pub fn with_expiry(mut self, expires_at_ms: u64) -> Self {
@@ -378,7 +386,9 @@ pub struct PreloadedUserSettings {
 
 impl PreloadedUserSettings {
     pub fn with_status(status: StatusSettings) -> Self {
-        Self { status: Some(status) }
+        Self {
+            status: Some(status),
+        }
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -425,7 +435,9 @@ impl PreloadedUserSettings {
     /// Convenience wrapper that base64-decodes a `settings` JSON value and
     /// then decodes the resulting protobuf bytes.
     pub fn from_base64(b64: &str) -> Result<Self, ProtoDecodeError> {
-        let bytes = STANDARD.decode(b64).map_err(|_| ProtoDecodeError::InvalidBase64)?;
+        let bytes = STANDARD
+            .decode(b64)
+            .map_err(|_| ProtoDecodeError::InvalidBase64)?;
         Self::decode(&bytes)
     }
 }
@@ -472,7 +484,8 @@ mod tests {
     //     1A 00                             show_current_game (field 3, empty BoolValue)
     //     2A 07 08 EF DB AD 83 91 33        status_expires_at_ms (field 5, Int64Value)
     // ---------------------------------------------------------------------
-    const STUDYPHIM_CURL_B64: &str = "WjQKCAoGb25saW5lEh0KCXN0dWR5cGhpbSFPGaPYnQEAAClPX8fXnQEAABoAKgcI79utg5Ez";
+    const STUDYPHIM_CURL_B64: &str =
+        "WjQKCAoGb25saW5lEh0KCXN0dWR5cGhpbSFPGaPYnQEAAClPX8fXnQEAABoAKgcI79utg5Ez";
     const STALE_STATUS_EXPIRES_AT_MS: u64 = 1_756_917_100_015;
 
     fn studyphim_settings() -> PreloadedUserSettings {
@@ -489,7 +502,9 @@ mod tests {
     #[test]
     fn test_encode_matches_studyphim_curl_byte_for_byte() {
         assert_eq!(studyphim_settings().to_base64(), STUDYPHIM_CURL_B64);
-        let expected = STANDARD.decode(STUDYPHIM_CURL_B64).expect("captured base64 decodes");
+        let expected = STANDARD
+            .decode(STUDYPHIM_CURL_B64)
+            .expect("captured base64 decodes");
         assert_eq!(studyphim_settings().encode(), expected);
     }
 
@@ -571,7 +586,9 @@ mod tests {
     #[test]
     fn test_encode_matches_status_test_1_curl_byte_for_byte() {
         assert_eq!(status_test_1_settings().to_base64(), STATUS_TEST_1_CURL_B64);
-        let expected = STANDARD.decode(STATUS_TEST_1_CURL_B64).expect("captured base64 decodes");
+        let expected = STANDARD
+            .decode(STATUS_TEST_1_CURL_B64)
+            .expect("captured base64 decodes");
         assert_eq!(status_test_1_settings().encode(), expected);
     }
 
@@ -648,14 +665,20 @@ mod tests {
     #[test]
     fn test_decode_round_trips_status_test_1() {
         let original = status_test_1_settings();
-        let decoded =
-            PreloadedUserSettings::from_base64(STATUS_TEST_1_CURL_B64).expect("captured base64 decodes");
+        let decoded = PreloadedUserSettings::from_base64(STATUS_TEST_1_CURL_B64)
+            .expect("captured base64 decodes");
         let status = decoded.status.as_ref().expect("status sub-message present");
         assert_eq!(status.status, "online");
         assert_eq!(status.show_current_game, Some(false));
-        assert_eq!(status.status_expires_at_ms, Some(STALE_STATUS_EXPIRES_AT_MS));
+        assert_eq!(
+            status.status_expires_at_ms,
+            Some(STALE_STATUS_EXPIRES_AT_MS)
+        );
 
-        let custom = status.custom_status.as_ref().expect("custom_status present");
+        let custom = status
+            .custom_status
+            .as_ref()
+            .expect("custom_status present");
         assert_eq!(custom.text, "status test 1");
         assert_eq!(custom.expires_at_ms, Some(STATUS_TEST_1_EXPIRES_MS));
         assert_eq!(custom.created_at_ms, Some(STATUS_TEST_1_CREATED_MS));
@@ -666,19 +689,28 @@ mod tests {
         // Re-encode and verify byte equivalence with the original capture.
         let original_encoded = original.encode();
         let recoded = PreloadedUserSettings::with_status(status.clone()).encode();
-        assert_eq!(recoded, original_encoded, "decode → re-encode round-trips bit-perfectly");
+        assert_eq!(
+            recoded, original_encoded,
+            "decode → re-encode round-trips bit-perfectly"
+        );
     }
 
     #[test]
     fn test_decode_studyphim_round_trips() {
-        let decoded =
-            PreloadedUserSettings::from_base64(STUDYPHIM_CURL_B64).expect("captured base64 decodes");
+        let decoded = PreloadedUserSettings::from_base64(STUDYPHIM_CURL_B64)
+            .expect("captured base64 decodes");
         let status = decoded.status.as_ref().expect("status sub-message present");
         assert_eq!(status.status, "online");
         assert_eq!(status.show_current_game, Some(false));
-        assert_eq!(status.status_expires_at_ms, Some(STALE_STATUS_EXPIRES_AT_MS));
+        assert_eq!(
+            status.status_expires_at_ms,
+            Some(STALE_STATUS_EXPIRES_AT_MS)
+        );
 
-        let custom = status.custom_status.as_ref().expect("custom_status present");
+        let custom = status
+            .custom_status
+            .as_ref()
+            .expect("custom_status present");
         assert_eq!(custom.text, "studyphim");
         assert_eq!(custom.expires_at_ms, Some(0x0000_019D_D8A3_194F));
         assert_eq!(custom.created_at_ms, Some(0x0000_019D_D7C7_5F4F));
@@ -700,9 +732,15 @@ mod tests {
         // PATCH body back).
         assert_eq!(status.status, "online");
         assert_eq!(status.show_current_game, Some(false));
-        assert_eq!(status.status_expires_at_ms, Some(STALE_STATUS_EXPIRES_AT_MS));
+        assert_eq!(
+            status.status_expires_at_ms,
+            Some(STALE_STATUS_EXPIRES_AT_MS)
+        );
 
-        let custom = status.custom_status.as_ref().expect("custom_status echoed back");
+        let custom = status
+            .custom_status
+            .as_ref()
+            .expect("custom_status echoed back");
         assert_eq!(custom.text, "status test 1");
         assert_eq!(custom.expires_at_ms, Some(STATUS_TEST_1_EXPIRES_MS));
         assert_eq!(custom.created_at_ms, Some(STATUS_TEST_1_CREATED_MS));

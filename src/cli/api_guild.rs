@@ -10,10 +10,7 @@ impl WriteApi {
     pub async fn guild_edit(&self, guild_id: &str, body: Value) -> Result<Value> {
         crate::cli::api::parse_snowflake(guild_id)?;
         self.raw()
-            .patch::<Value, _>(
-                Route::Custom(format!("guilds/{}", guild_id).into()),
-                body,
-            )
+            .patch::<Value, _>(Route::Custom(format!("guilds/{}", guild_id).into()), body)
             .await
             .map_err(|e| anyhow!(e.to_string()))
     }
@@ -56,9 +53,7 @@ impl WriteApi {
     pub async fn guild_widget_get(&self, guild_id: &str) -> Result<Value> {
         crate::cli::api::parse_snowflake(guild_id)?;
         self.raw()
-            .get::<Value>(Route::Custom(
-                format!("guilds/{}/widget", guild_id).into(),
-            ))
+            .get::<Value>(Route::Custom(format!("guilds/{}/widget", guild_id).into()))
             .await
             .map_err(|e| anyhow!(e.to_string()))
     }

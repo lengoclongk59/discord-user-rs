@@ -15,14 +15,21 @@ use tokio::{
     net::TcpStream,
     sync::{broadcast, mpsc, RwLock},
 };
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{
+    connect_async, tungstenite::protocol::Message as WsMessage, MaybeTlsStream, WebSocketStream,
+};
 use tracing::{error, info, warn};
 
 /// The future type returned by the asynchronous [`GatewayHooks`] methods.
 pub use futures::future::BoxFuture;
 
-pub use self::hooks::{default_close_verdict, CloseVerdict, DefaultHooks, GatewayHooks, IdentifyDefaults};
-pub use self::machine::{plan_reconnect, ReconnectCause, BACKOFF_MAX, BACKOFF_MIN, FAST_RECONNECT, INVALID_SESSION_MAX, INVALID_SESSION_MIN};
+pub use self::hooks::{
+    default_close_verdict, CloseVerdict, DefaultHooks, GatewayHooks, IdentifyDefaults,
+};
+pub use self::machine::{
+    plan_reconnect, ReconnectCause, BACKOFF_MAX, BACKOFF_MIN, FAST_RECONNECT, INVALID_SESSION_MAX,
+    INVALID_SESSION_MIN,
+};
 use self::machine::{Action, GatewayCore};
 use self::stream::EventSink;
 pub use self::stream::{FrameBuffer, GatewayEvent, GatewayEvents, GatewayStatus};
@@ -40,7 +47,8 @@ mod stream;
 const GATEWAY_URL: &str = "wss://gateway-us-east1-c.discord.gg/?encoding=json&v=9";
 
 /// Gateway endpoint when zstd-stream compression is requested.
-const GATEWAY_URL_ZSTD: &str = "wss://gateway-us-east1-c.discord.gg/?encoding=json&v=9&compress=zstd-stream";
+const GATEWAY_URL_ZSTD: &str =
+    "wss://gateway-us-east1-c.discord.gg/?encoding=json&v=9&compress=zstd-stream";
 
 /// Capabilities bitmask for the IDENTIFY payload (user-account equivalent of
 /// gateway intents). 16381 is the value the official Discord web client has
@@ -97,7 +105,9 @@ async fn client_build_number() -> u32 {
         return n;
     }
     let n = fetch_build_number_from_discord().await.unwrap_or_else(|| {
-        warn!("Could not fetch Discord build number, using fallback {CLIENT_BUILD_NUMBER_FALLBACK}");
+        warn!(
+            "Could not fetch Discord build number, using fallback {CLIENT_BUILD_NUMBER_FALLBACK}"
+        );
         CLIENT_BUILD_NUMBER_FALLBACK
     });
     info!("Discord client build number: {n}");
@@ -106,7 +116,12 @@ async fn client_build_number() -> u32 {
 }
 
 async fn fetch_build_number_from_discord() -> Option<u32> {
-    let html = reqwest::get("https://discord.com/login").await.ok()?.text().await.ok()?;
+    let html = reqwest::get("https://discord.com/login")
+        .await
+        .ok()?
+        .text()
+        .await
+        .ok()?;
     let marker = "\"BUILD_NUMBER\":\"";
     let start = html.find(marker)? + marker.len();
     let end = html[start..].find('"')? + start;
@@ -246,8 +261,17 @@ pub struct Gateway {
 
 impl Gateway {
     /// Create a new gateway connection
-    pub fn new(token: String, custom_status: UserStatus, event_buffer_size: usize) -> (Self, broadcast::Receiver<DispatchEvent>) {
-        Self::new_with_capabilities(token, custom_status, event_buffer_size, DEFAULT_CAPABILITIES)
+    pub fn new(
+        token: String,
+        custom_status: UserStatus,
+        event_buffer_size: usize,
+    ) -> (Self, broadcast::Receiver<DispatchEvent>) {
+        Self::new_with_capabilities(
+            token,
+            custom_status,
+            event_buffer_size,
+            DEFAULT_CAPABILITIES,
+        )
     }
 
     /// Create a gateway connection with a custom capabilities bitmask.
@@ -256,7 +280,12 @@ impl Gateway {
     /// IDENTIFY payload — the user-account equivalent of gateway intents.
     /// Use [`GatewayIntents`](crate::types::GatewayIntents) bits or a raw
     /// `u32`.
-    pub fn new_with_capabilities(token: String, custom_status: UserStatus, event_buffer_size: usize, capabilities: u32) -> (Self, broadcast::Receiver<DispatchEvent>) {
+    pub fn new_with_capabilities(
+        token: String,
+        custom_status: UserStatus,
+        event_buffer_size: usize,
+        capabilities: u32,
+    ) -> (Self, broadcast::Receiver<DispatchEvent>) {
         let (event_sender, event_receiver) = broadcast::channel(event_buffer_size);
 
         (
@@ -370,7 +399,14 @@ impl Gateway {
 
     /// The library's IDENTIFY settings, as configured on this gateway.
     pub fn identify_defaults(&self) -> IdentifyDefaults {
-        IdentifyDefaults { custom_status: self.custom_status, capabilities: self.capabilities, intents: self.intents, large_threshold: self.large_threshold, shard: self.shard, client_build_number: self.client_build_number }
+        IdentifyDefaults {
+            custom_status: self.custom_status,
+            capabilities: self.capabilities,
+            intents: self.intents,
+            large_threshold: self.large_threshold,
+            shard: self.shard,
+            client_build_number: self.client_build_number,
+        }
     }
 
     /// Return the gateway URL for the configured override or compression.
@@ -405,8 +441,14 @@ impl Gateway {
     /// Fails with [`DiscordError::GatewayConnection`](crate::DiscordError::GatewayConnection)
     /// when [`GatewayHooks::token`] has no credential.
     pub async fn connect(&mut self) -> Result<()> {
-        with_sink(&self.events, |sink| sink.status(GatewayStatus::Connecting, None));
-        let token = self.hooks.token(&self.token).await.ok_or_else(|| crate::error::DiscordError::GatewayConnection("no gateway credential available".to_string()))?;
+        with_sink(&self.events, |sink| {
+            sink.status(GatewayStatus::Connecting, None)
+        });
+        let token = self.hooks.token(&self.token).await.ok_or_else(|| {
+            crate::error::DiscordError::GatewayConnection(
+                "no gateway credential available".to_string(),
+            )
+        })?;
         let mut core = GatewayCore::new(self.gateway_url().to_string(), token);
         core.connecting();
         self.shared().stage = core.stage();
@@ -466,13 +508,20 @@ impl Gateway {
                     }
 
                     // Calculate exponential backoff delay
-                    let delay_secs = std::cmp::min(base_delay_secs * 2u64.pow(attempt), max_delay_secs);
+                    let delay_secs =
+                        std::cmp::min(base_delay_secs * 2u64.pow(attempt), max_delay_secs);
 
                     // Add jitter (0-500ms) to prevent thundering herd
                     let jitter_ms = rand::random::<u64>() % 500;
-                    let total_delay = Duration::from_secs(delay_secs) + Duration::from_millis(jitter_ms);
+                    let total_delay =
+                        Duration::from_secs(delay_secs) + Duration::from_millis(jitter_ms);
 
-                    warn!("Connection attempt {} failed: {}. Retrying in {:?}", attempt + 1, e, total_delay);
+                    warn!(
+                        "Connection attempt {} failed: {}. Retrying in {:?}",
+                        attempt + 1,
+                        e,
+                        total_delay
+                    );
 
                     tokio::time::sleep(total_delay).await;
                 }
@@ -491,7 +540,13 @@ impl Gateway {
     ///
     /// Mirrors serenity's `VoiceGatewayManager::join()`; Discord responds with
     /// a `VOICE_STATE_UPDATE` dispatch event containing the assigned session.
-    pub async fn send_voice_state_update(&self, guild_id: u64, channel_id: Option<u64>, self_mute: bool, self_deaf: bool) -> Result<()> {
+    pub async fn send_voice_state_update(
+        &self,
+        guild_id: u64,
+        channel_id: Option<u64>,
+        self_mute: bool,
+        self_deaf: bool,
+    ) -> Result<()> {
         let payload = json!({
             "op": Opcode::VoiceStateUpdate as u8,
             "d": {
@@ -539,7 +594,15 @@ impl Gateway {
     ///
     /// All optional fields are omitted from the JSON when `None` so we don't
     /// trip Discord's strict payload validator with stray nulls.
-    pub async fn request_guild_members(&self, guild_id: u64, query: Option<&str>, limit: u32, presences: Option<bool>, user_ids: Option<&[u64]>, nonce: Option<&str>) -> Result<()> {
+    pub async fn request_guild_members(
+        &self,
+        guild_id: u64,
+        query: Option<&str>,
+        limit: u32,
+        presences: Option<bool>,
+        user_ids: Option<&[u64]>,
+        nonce: Option<&str>,
+    ) -> Result<()> {
         let mut d = serde_json::Map::new();
         d.insert("guild_id".to_string(), Value::from(guild_id.to_string()));
         if let Some(q) = query {
@@ -573,7 +636,10 @@ impl Gateway {
     /// (snowflakes serialised as strings). Discord replies with one
     /// `SOUNDBOARD_SOUNDS` dispatch per guild.
     pub async fn request_soundboard_sounds(&self, guild_ids: &[u64]) -> Result<()> {
-        let ids: Vec<Value> = guild_ids.iter().map(|id| Value::from(id.to_string())).collect();
+        let ids: Vec<Value> = guild_ids
+            .iter()
+            .map(|id| Value::from(id.to_string()))
+            .collect();
         let payload = json!({
             "op": 31,
             "d": { "guild_ids": ids }
@@ -591,7 +657,10 @@ impl Gateway {
     /// { "guild_id": "...", "channel_ids": ["..."] }
     /// ```
     pub async fn request_channel_info(&self, guild_id: u64, channel_ids: &[u64]) -> Result<()> {
-        let ids: Vec<Value> = channel_ids.iter().map(|id| Value::from(id.to_string())).collect();
+        let ids: Vec<Value> = channel_ids
+            .iter()
+            .map(|id| Value::from(id.to_string()))
+            .collect();
         let payload = json!({
             "op": 43,
             "d": {
@@ -696,7 +765,9 @@ impl Supervisor {
                     let connected = match self.hooks.token(&self.configured_token).await {
                         Some(token) => {
                             self.core.set_token(token);
-                            connect_async(self.core.connect_url()).await.map_err(|e| e.to_string())
+                            connect_async(self.core.connect_url())
+                                .await
+                                .map_err(|e| e.to_string())
                         }
                         None => Err("no gateway credential available".to_string()),
                     };
@@ -737,7 +808,10 @@ impl Supervisor {
                 GatewayLoopOutcome::Closed { code, reason } => {
                     if code == Some(4004) {
                         self.hooks.invalidate();
-                        self.status(GatewayStatus::AuthFailed, Some(format!("close 4004: {reason}")));
+                        self.status(
+                            GatewayStatus::AuthFailed,
+                            Some(format!("close 4004: {reason}")),
+                        );
                     }
                     match self.hooks.on_close(code, &reason) {
                         CloseVerdict::Resume => ReconnectCause::Resume,
@@ -776,7 +850,12 @@ impl Supervisor {
             let _ = w.close().await;
         }
         self.publish();
-        let sink = self.events.lock().unwrap_or_else(|e| e.into_inner()).sink.take();
+        let sink = self
+            .events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .sink
+            .take();
         if let Some(sink) = sink {
             sink.finish(Some(stop_detail)).await;
         }
@@ -784,7 +863,11 @@ impl Supervisor {
     }
 
     /// Read one connection until it ends, running the core's actions.
-    async fn read_connection(&mut self, reader: &mut WsReader, shutdown_rx: &mut mpsc::Receiver<()>) -> GatewayLoopOutcome {
+    async fn read_connection(
+        &mut self,
+        reader: &mut WsReader,
+        shutdown_rx: &mut mpsc::Receiver<()>,
+    ) -> GatewayLoopOutcome {
         loop {
             let deadline = self.core.next_deadline();
             let wake = async {
@@ -851,12 +934,23 @@ impl Supervisor {
     /// Carry out the core's actions. `raw` is the frame that produced them,
     /// if any. Returns an outcome when one of the actions ends the
     /// connection.
-    async fn run_actions(&mut self, actions: Vec<Action>, raw: Option<&str>) -> Option<GatewayLoopOutcome> {
+    async fn run_actions(
+        &mut self,
+        actions: Vec<Action>,
+        raw: Option<&str>,
+    ) -> Option<GatewayLoopOutcome> {
         for action in actions {
             match action {
                 Action::Received { op, s, t } => {
                     if let Some(raw) = raw {
-                        with_sink(&self.events, |sink| sink.emit(GatewayEvent::Frame { op, s, t, raw: raw.to_string() }));
+                        with_sink(&self.events, |sink| {
+                            sink.emit(GatewayEvent::Frame {
+                                op,
+                                s,
+                                t,
+                                raw: raw.to_string(),
+                            })
+                        });
                     }
                 }
                 Action::Live => self.status(GatewayStatus::Live, None),
@@ -873,8 +967,14 @@ impl Supervisor {
                     }
                 }
                 Action::Dispatch { event_type, data } => {
-                    if let Err(e) = self.event_sender.send(DispatchEvent::new(event_type.clone(), data)) {
-                        warn!("Failed to dispatch event '{}': no active receivers ({})", event_type, e);
+                    if let Err(e) = self
+                        .event_sender
+                        .send(DispatchEvent::new(event_type.clone(), data))
+                    {
+                        warn!(
+                            "Failed to dispatch event '{}': no active receivers ({})",
+                            event_type, e
+                        );
                     }
                 }
                 Action::Reconnect { cause, reason } => {
@@ -891,7 +991,10 @@ impl Supervisor {
     /// The wait before the next connect, from the caller's pacing hook.
     fn reconnect_delay(&mut self, cause: ReconnectCause) -> Duration {
         let hooks = &self.hooks;
-        self.core.reconnect_delay(cause, rand::random(), |cause, backoff, held, rand| hooks.delay(cause, backoff, held, rand))
+        self.core
+            .reconnect_delay(cause, rand::random(), |cause, backoff, held, rand| {
+                hooks.delay(cause, backoff, held, rand)
+            })
     }
 
     fn status(&self, status: GatewayStatus, detail: Option<String>) {
@@ -926,7 +1029,9 @@ impl Gateway {
         // Fall back to raw deflate (no zlib header)
         let mut decoder = flate2::read::DeflateDecoder::new(bytes);
         let mut out = String::new();
-        decoder.read_to_string(&mut out).map_err(|e| e.to_string())?;
+        decoder
+            .read_to_string(&mut out)
+            .map_err(|e| e.to_string())?;
         Ok(out)
     }
 }
@@ -950,7 +1055,8 @@ mod tests {
     /// Messages compressed the way `zlib-stream` does it: one stream for the
     /// connection, sync-flushed after each message.
     fn zlib_stream_frames(messages: &[&str]) -> Vec<Vec<u8>> {
-        let mut encoder = ZlibEncoder::new_with_compress(Vec::new(), Compress::new(Compression::default(), true));
+        let mut encoder =
+            ZlibEncoder::new_with_compress(Vec::new(), Compress::new(Compression::default(), true));
         let mut frames = Vec::new();
         let mut seen = 0;
         for message in messages {
@@ -971,20 +1077,33 @@ mod tests {
     /// error. The earlier frames decode under one version and not the other.
     #[test]
     fn zlib_stream_frames_do_not_decode_one_at_a_time() {
-        let messages = [r#"{"op":10,"d":{"heartbeat_interval":41250}}"#, r#"{"op":0,"t":"READY","s":1,"d":{"session_id":"abc"}}"#, r#"{"op":0,"t":"MESSAGE_CREATE","s":2,"d":{"session_id":"abc"}}"#];
+        let messages = [
+            r#"{"op":10,"d":{"heartbeat_interval":41250}}"#,
+            r#"{"op":0,"t":"READY","s":1,"d":{"session_id":"abc"}}"#,
+            r#"{"op":0,"t":"MESSAGE_CREATE","s":2,"d":{"session_id":"abc"}}"#,
+        ];
         let frames = zlib_stream_frames(&messages);
 
         for (i, frame) in frames.iter().enumerate() {
-            assert!(frame.ends_with(&[0x00, 0x00, 0xff, 0xff]), "frame {i} ends at a sync flush");
+            assert!(
+                frame.ends_with(&[0x00, 0x00, 0xff, 0xff]),
+                "frame {i} ends at a sync flush"
+            );
         }
-        assert_ne!(Gateway::decompress_zlib(&frames[2]).ok().as_deref(), Some(messages[2]), "a frame that refers back to earlier frames decoded on its own");
+        assert_ne!(
+            Gateway::decompress_zlib(&frames[2]).ok().as_deref(),
+            Some(messages[2]),
+            "a frame that refers back to earlier frames decoded on its own"
+        );
 
         // The same frames decode with one inflater kept across them, which is
         // what the transport requires.
         let mut inflater = Decompress::new(true);
         for (frame, message) in frames.iter().zip(messages) {
             let mut out = Vec::with_capacity(1024);
-            inflater.decompress_vec(frame, &mut out, FlushDecompress::Sync).unwrap();
+            inflater
+                .decompress_vec(frame, &mut out, FlushDecompress::Sync)
+                .unwrap();
             assert_eq!(String::from_utf8(out).unwrap(), message);
         }
     }

@@ -73,12 +73,26 @@ pub struct CreateButton {
 impl CreateButton {
     /// Create a non-link button with the given `custom_id` and style.
     pub fn new(custom_id: impl Into<String>, style: ButtonStyle) -> Self {
-        Self { style, custom_id: Some(custom_id.into()), url: None, label: None, emoji: None, disabled: false }
+        Self {
+            style,
+            custom_id: Some(custom_id.into()),
+            url: None,
+            label: None,
+            emoji: None,
+            disabled: false,
+        }
     }
 
     /// Create a link button that navigates to `url`.
     pub fn link(url: impl Into<String>) -> Self {
-        Self { style: ButtonStyle::Link, custom_id: None, url: Some(url.into()), label: None, emoji: None, disabled: false }
+        Self {
+            style: ButtonStyle::Link,
+            custom_id: None,
+            url: Some(url.into()),
+            label: None,
+            emoji: None,
+            disabled: false,
+        }
     }
 
     /// Set the visible label text.
@@ -152,7 +166,13 @@ pub struct CreateSelectMenuOption {
 impl CreateSelectMenuOption {
     /// Create an option with the required label and value fields.
     pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
-        Self { label: label.into(), value: value.into(), description: None, emoji: None, default: None }
+        Self {
+            label: label.into(),
+            value: value.into(),
+            description: None,
+            emoji: None,
+            default: None,
+        }
     }
 
     /// Add a description line.
@@ -374,17 +394,26 @@ pub struct DefaultValue {
 impl DefaultValue {
     /// Construct a default user reference.
     pub fn user(id: impl Into<String>) -> Self {
-        Self { id: id.into(), type_: "user".into() }
+        Self {
+            id: id.into(),
+            type_: "user".into(),
+        }
     }
 
     /// Construct a default role reference.
     pub fn role(id: impl Into<String>) -> Self {
-        Self { id: id.into(), type_: "role".into() }
+        Self {
+            id: id.into(),
+            type_: "role".into(),
+        }
     }
 
     /// Construct a default channel reference.
     pub fn channel(id: impl Into<String>) -> Self {
-        Self { id: id.into(), type_: "channel".into() }
+        Self {
+            id: id.into(),
+            type_: "channel".into(),
+        }
     }
 }
 
@@ -423,7 +452,11 @@ pub struct MediaGalleryItem {
 impl MediaGalleryItem {
     /// Construct a gallery tile from a media URL.
     pub fn new(url: impl Into<String>) -> Self {
-        Self { media: UnfurledMediaItem::new(url), description: None, spoiler: None }
+        Self {
+            media: UnfurledMediaItem::new(url),
+            description: None,
+            spoiler: None,
+        }
     }
 
     /// Set alt text.
@@ -460,7 +493,12 @@ pub struct RadioOption {
 impl RadioOption {
     /// Construct an option with the required label and value.
     pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
-        Self { label: label.into(), value: value.into(), description: None, default: None }
+        Self {
+            label: label.into(),
+            value: value.into(),
+            description: None,
+            default: None,
+        }
     }
 
     /// Add a description line.
@@ -682,51 +720,169 @@ impl Serialize for Component {
         match self {
             Component::ActionRow { components, id } => {
                 obj.insert("type".into(), json!(ComponentType::ActionRow as u8));
-                obj.insert("components".into(), serde_json::to_value(components).map_err(serde::ser::Error::custom)?);
+                obj.insert(
+                    "components".into(),
+                    serde_json::to_value(components).map_err(serde::ser::Error::custom)?,
+                );
                 insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
             }
-            Component::UserSelect { custom_id, placeholder, default_values, min_values, max_values, disabled } => {
+            Component::UserSelect {
+                custom_id,
+                placeholder,
+                default_values,
+                min_values,
+                max_values,
+                disabled,
+            } => {
                 obj.insert("type".into(), json!(ComponentType::UserSelect as u8));
                 obj.insert("custom_id".into(), json!(custom_id));
-                insert_opt(&mut obj, "placeholder", placeholder.as_ref().map(|x| json!(x)));
-                insert_opt(&mut obj, "default_values", default_values.as_ref().map(|x| serde_json::to_value(x).unwrap()));
-                insert_opt(&mut obj, "min_values", min_values.as_ref().map(|x| json!(x)));
-                insert_opt(&mut obj, "max_values", max_values.as_ref().map(|x| json!(x)));
+                insert_opt(
+                    &mut obj,
+                    "placeholder",
+                    placeholder.as_ref().map(|x| json!(x)),
+                );
+                insert_opt(
+                    &mut obj,
+                    "default_values",
+                    default_values
+                        .as_ref()
+                        .map(|x| serde_json::to_value(x).unwrap()),
+                );
+                insert_opt(
+                    &mut obj,
+                    "min_values",
+                    min_values.as_ref().map(|x| json!(x)),
+                );
+                insert_opt(
+                    &mut obj,
+                    "max_values",
+                    max_values.as_ref().map(|x| json!(x)),
+                );
                 insert_opt(&mut obj, "disabled", disabled.as_ref().map(|x| json!(x)));
             }
-            Component::RoleSelect { custom_id, placeholder, default_values, min_values, max_values, disabled } => {
+            Component::RoleSelect {
+                custom_id,
+                placeholder,
+                default_values,
+                min_values,
+                max_values,
+                disabled,
+            } => {
                 obj.insert("type".into(), json!(ComponentType::RoleSelect as u8));
                 obj.insert("custom_id".into(), json!(custom_id));
-                insert_opt(&mut obj, "placeholder", placeholder.as_ref().map(|x| json!(x)));
-                insert_opt(&mut obj, "default_values", default_values.as_ref().map(|x| serde_json::to_value(x).unwrap()));
-                insert_opt(&mut obj, "min_values", min_values.as_ref().map(|x| json!(x)));
-                insert_opt(&mut obj, "max_values", max_values.as_ref().map(|x| json!(x)));
+                insert_opt(
+                    &mut obj,
+                    "placeholder",
+                    placeholder.as_ref().map(|x| json!(x)),
+                );
+                insert_opt(
+                    &mut obj,
+                    "default_values",
+                    default_values
+                        .as_ref()
+                        .map(|x| serde_json::to_value(x).unwrap()),
+                );
+                insert_opt(
+                    &mut obj,
+                    "min_values",
+                    min_values.as_ref().map(|x| json!(x)),
+                );
+                insert_opt(
+                    &mut obj,
+                    "max_values",
+                    max_values.as_ref().map(|x| json!(x)),
+                );
                 insert_opt(&mut obj, "disabled", disabled.as_ref().map(|x| json!(x)));
             }
-            Component::MentionableSelect { custom_id, placeholder, default_values, min_values, max_values, disabled } => {
+            Component::MentionableSelect {
+                custom_id,
+                placeholder,
+                default_values,
+                min_values,
+                max_values,
+                disabled,
+            } => {
                 obj.insert("type".into(), json!(ComponentType::MentionableSelect as u8));
                 obj.insert("custom_id".into(), json!(custom_id));
-                insert_opt(&mut obj, "placeholder", placeholder.as_ref().map(|x| json!(x)));
-                insert_opt(&mut obj, "default_values", default_values.as_ref().map(|x| serde_json::to_value(x).unwrap()));
-                insert_opt(&mut obj, "min_values", min_values.as_ref().map(|x| json!(x)));
-                insert_opt(&mut obj, "max_values", max_values.as_ref().map(|x| json!(x)));
+                insert_opt(
+                    &mut obj,
+                    "placeholder",
+                    placeholder.as_ref().map(|x| json!(x)),
+                );
+                insert_opt(
+                    &mut obj,
+                    "default_values",
+                    default_values
+                        .as_ref()
+                        .map(|x| serde_json::to_value(x).unwrap()),
+                );
+                insert_opt(
+                    &mut obj,
+                    "min_values",
+                    min_values.as_ref().map(|x| json!(x)),
+                );
+                insert_opt(
+                    &mut obj,
+                    "max_values",
+                    max_values.as_ref().map(|x| json!(x)),
+                );
                 insert_opt(&mut obj, "disabled", disabled.as_ref().map(|x| json!(x)));
             }
-            Component::ChannelSelect { custom_id, placeholder, channel_types, default_values, min_values, max_values, disabled } => {
+            Component::ChannelSelect {
+                custom_id,
+                placeholder,
+                channel_types,
+                default_values,
+                min_values,
+                max_values,
+                disabled,
+            } => {
                 obj.insert("type".into(), json!(ComponentType::ChannelSelect as u8));
                 obj.insert("custom_id".into(), json!(custom_id));
-                insert_opt(&mut obj, "placeholder", placeholder.as_ref().map(|x| json!(x)));
-                insert_opt(&mut obj, "channel_types", channel_types.as_ref().map(|x| json!(x)));
-                insert_opt(&mut obj, "default_values", default_values.as_ref().map(|x| serde_json::to_value(x).unwrap()));
-                insert_opt(&mut obj, "min_values", min_values.as_ref().map(|x| json!(x)));
-                insert_opt(&mut obj, "max_values", max_values.as_ref().map(|x| json!(x)));
+                insert_opt(
+                    &mut obj,
+                    "placeholder",
+                    placeholder.as_ref().map(|x| json!(x)),
+                );
+                insert_opt(
+                    &mut obj,
+                    "channel_types",
+                    channel_types.as_ref().map(|x| json!(x)),
+                );
+                insert_opt(
+                    &mut obj,
+                    "default_values",
+                    default_values
+                        .as_ref()
+                        .map(|x| serde_json::to_value(x).unwrap()),
+                );
+                insert_opt(
+                    &mut obj,
+                    "min_values",
+                    min_values.as_ref().map(|x| json!(x)),
+                );
+                insert_opt(
+                    &mut obj,
+                    "max_values",
+                    max_values.as_ref().map(|x| json!(x)),
+                );
                 insert_opt(&mut obj, "disabled", disabled.as_ref().map(|x| json!(x)));
             }
-            Component::Section { components, accessory, id } => {
+            Component::Section {
+                components,
+                accessory,
+                id,
+            } => {
                 obj.insert("type".into(), json!(ComponentType::Section as u8));
-                obj.insert("components".into(), serde_json::to_value(components).map_err(serde::ser::Error::custom)?);
+                obj.insert(
+                    "components".into(),
+                    serde_json::to_value(components).map_err(serde::ser::Error::custom)?,
+                );
                 if let Some(a) = accessory {
-                    obj.insert("accessory".into(), serde_json::to_value(a.as_ref()).map_err(serde::ser::Error::custom)?);
+                    obj.insert(
+                        "accessory".into(),
+                        serde_json::to_value(a.as_ref()).map_err(serde::ser::Error::custom)?,
+                    );
                 }
                 insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
             }
@@ -735,72 +891,167 @@ impl Serialize for Component {
                 obj.insert("content".into(), json!(content));
                 insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
             }
-            Component::Thumbnail { media, description, spoiler, id } => {
+            Component::Thumbnail {
+                media,
+                description,
+                spoiler,
+                id,
+            } => {
                 obj.insert("type".into(), json!(ComponentType::Thumbnail as u8));
-                obj.insert("media".into(), serde_json::to_value(media).map_err(serde::ser::Error::custom)?);
-                insert_opt(&mut obj, "description", description.as_ref().map(|x| json!(x)));
+                obj.insert(
+                    "media".into(),
+                    serde_json::to_value(media).map_err(serde::ser::Error::custom)?,
+                );
+                insert_opt(
+                    &mut obj,
+                    "description",
+                    description.as_ref().map(|x| json!(x)),
+                );
                 insert_opt(&mut obj, "spoiler", spoiler.as_ref().map(|x| json!(x)));
                 insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
             }
             Component::MediaGallery { items, id } => {
                 obj.insert("type".into(), json!(ComponentType::MediaGallery as u8));
-                obj.insert("items".into(), serde_json::to_value(items).map_err(serde::ser::Error::custom)?);
+                obj.insert(
+                    "items".into(),
+                    serde_json::to_value(items).map_err(serde::ser::Error::custom)?,
+                );
                 insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
             }
             Component::File { file, spoiler, id } => {
                 obj.insert("type".into(), json!(ComponentType::File as u8));
-                obj.insert("file".into(), serde_json::to_value(file).map_err(serde::ser::Error::custom)?);
+                obj.insert(
+                    "file".into(),
+                    serde_json::to_value(file).map_err(serde::ser::Error::custom)?,
+                );
                 insert_opt(&mut obj, "spoiler", spoiler.as_ref().map(|x| json!(x)));
                 insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
             }
-            Component::Separator { divider, spacing, id } => {
+            Component::Separator {
+                divider,
+                spacing,
+                id,
+            } => {
                 obj.insert("type".into(), json!(ComponentType::Separator as u8));
                 insert_opt(&mut obj, "divider", divider.as_ref().map(|x| json!(x)));
                 insert_opt(&mut obj, "spacing", spacing.as_ref().map(|x| json!(x)));
                 insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
             }
-            Component::Container { components, accent_color, spoiler, id } => {
+            Component::Container {
+                components,
+                accent_color,
+                spoiler,
+                id,
+            } => {
                 obj.insert("type".into(), json!(ComponentType::Container as u8));
-                obj.insert("components".into(), serde_json::to_value(components).map_err(serde::ser::Error::custom)?);
-                insert_opt(&mut obj, "accent_color", accent_color.as_ref().map(|x| json!(x)));
+                obj.insert(
+                    "components".into(),
+                    serde_json::to_value(components).map_err(serde::ser::Error::custom)?,
+                );
+                insert_opt(
+                    &mut obj,
+                    "accent_color",
+                    accent_color.as_ref().map(|x| json!(x)),
+                );
                 insert_opt(&mut obj, "spoiler", spoiler.as_ref().map(|x| json!(x)));
                 insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
             }
-            Component::Label { label, description, component, id } => {
+            Component::Label {
+                label,
+                description,
+                component,
+                id,
+            } => {
                 obj.insert("type".into(), json!(ComponentType::Label as u8));
                 obj.insert("label".into(), json!(label));
-                insert_opt(&mut obj, "description", description.as_ref().map(|x| json!(x)));
-                obj.insert("component".into(), serde_json::to_value(component.as_ref()).map_err(serde::ser::Error::custom)?);
+                insert_opt(
+                    &mut obj,
+                    "description",
+                    description.as_ref().map(|x| json!(x)),
+                );
+                obj.insert(
+                    "component".into(),
+                    serde_json::to_value(component.as_ref()).map_err(serde::ser::Error::custom)?,
+                );
                 insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
             }
-            Component::FileUpload { custom_id, min_values, max_values, required, id } => {
+            Component::FileUpload {
+                custom_id,
+                min_values,
+                max_values,
+                required,
+                id,
+            } => {
                 obj.insert("type".into(), json!(ComponentType::FileUpload as u8));
                 obj.insert("custom_id".into(), json!(custom_id));
-                insert_opt(&mut obj, "min_values", min_values.as_ref().map(|x| json!(x)));
-                insert_opt(&mut obj, "max_values", max_values.as_ref().map(|x| json!(x)));
+                insert_opt(
+                    &mut obj,
+                    "min_values",
+                    min_values.as_ref().map(|x| json!(x)),
+                );
+                insert_opt(
+                    &mut obj,
+                    "max_values",
+                    max_values.as_ref().map(|x| json!(x)),
+                );
                 insert_opt(&mut obj, "required", required.as_ref().map(|x| json!(x)));
                 insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
             }
-            Component::RadioGroup { custom_id, options, required, id } => {
+            Component::RadioGroup {
+                custom_id,
+                options,
+                required,
+                id,
+            } => {
                 obj.insert("type".into(), json!(ComponentType::RadioGroup as u8));
                 obj.insert("custom_id".into(), json!(custom_id));
-                obj.insert("options".into(), serde_json::to_value(options).map_err(serde::ser::Error::custom)?);
+                obj.insert(
+                    "options".into(),
+                    serde_json::to_value(options).map_err(serde::ser::Error::custom)?,
+                );
                 insert_opt(&mut obj, "required", required.as_ref().map(|x| json!(x)));
                 insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
             }
-            Component::CheckboxGroup { custom_id, options, min_values, max_values, id } => {
+            Component::CheckboxGroup {
+                custom_id,
+                options,
+                min_values,
+                max_values,
+                id,
+            } => {
                 obj.insert("type".into(), json!(ComponentType::CheckboxGroup as u8));
                 obj.insert("custom_id".into(), json!(custom_id));
-                obj.insert("options".into(), serde_json::to_value(options).map_err(serde::ser::Error::custom)?);
-                insert_opt(&mut obj, "min_values", min_values.as_ref().map(|x| json!(x)));
-                insert_opt(&mut obj, "max_values", max_values.as_ref().map(|x| json!(x)));
+                obj.insert(
+                    "options".into(),
+                    serde_json::to_value(options).map_err(serde::ser::Error::custom)?,
+                );
+                insert_opt(
+                    &mut obj,
+                    "min_values",
+                    min_values.as_ref().map(|x| json!(x)),
+                );
+                insert_opt(
+                    &mut obj,
+                    "max_values",
+                    max_values.as_ref().map(|x| json!(x)),
+                );
                 insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
             }
-            Component::Checkbox { custom_id, label, description, default, id } => {
+            Component::Checkbox {
+                custom_id,
+                label,
+                description,
+                default,
+                id,
+            } => {
                 obj.insert("type".into(), json!(ComponentType::Checkbox as u8));
                 obj.insert("custom_id".into(), json!(custom_id));
                 obj.insert("label".into(), json!(label));
-                insert_opt(&mut obj, "description", description.as_ref().map(|x| json!(x)));
+                insert_opt(
+                    &mut obj,
+                    "description",
+                    description.as_ref().map(|x| json!(x)),
+                );
                 insert_opt(&mut obj, "default", default.as_ref().map(|x| json!(x)));
                 insert_opt(&mut obj, "id", id.as_ref().map(|x| json!(x)));
             }
@@ -812,13 +1063,19 @@ impl Serialize for Component {
 impl<'de> Deserialize<'de> for Component {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let v = Value::deserialize(deserializer)?;
-        let obj = v.as_object().ok_or_else(|| serde::de::Error::custom("expected component object"))?;
-        let ty = obj.get("type")
+        let obj = v
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("expected component object"))?;
+        let ty = obj
+            .get("type")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| serde::de::Error::custom("missing/invalid integer `type`"))? as u8;
+            .ok_or_else(|| serde::de::Error::custom("missing/invalid integer `type`"))?
+            as u8;
 
         let take_str = |k: &str| -> Result<String, D::Error> {
-            obj.get(k).and_then(|v| v.as_str()).map(String::from)
+            obj.get(k)
+                .and_then(|v| v.as_str())
+                .map(String::from)
                 .ok_or_else(|| serde::de::Error::custom(format!("missing string field `{k}`")))
         };
         let opt_str = |k: &str| obj.get(k).and_then(|v| v.as_str()).map(String::from);
@@ -826,27 +1083,40 @@ impl<'de> Deserialize<'de> for Component {
         let opt_u32 = |k: &str| obj.get(k).and_then(|v| v.as_u64()).map(|x| x as u32);
         let opt_bool = |k: &str| obj.get(k).and_then(|v| v.as_bool());
         let opt_default_values = |k: &str| -> Result<Option<Vec<DefaultValue>>, D::Error> {
-            obj.get(k).map(|v| serde_json::from_value(v.clone()).map_err(serde::de::Error::custom)).transpose()
+            obj.get(k)
+                .map(|v| serde_json::from_value(v.clone()).map_err(serde::de::Error::custom))
+                .transpose()
         };
         let opt_components = |k: &str| -> Result<Vec<Component>, D::Error> {
             obj.get(k)
-                .map(|v| serde_json::from_value::<Vec<Component>>(v.clone()).map_err(serde::de::Error::custom))
+                .map(|v| {
+                    serde_json::from_value::<Vec<Component>>(v.clone())
+                        .map_err(serde::de::Error::custom)
+                })
                 .transpose()?
                 .ok_or_else(|| serde::de::Error::custom(format!("missing `{k}` array")))
         };
         let take_media = |k: &str| -> Result<UnfurledMediaItem, D::Error> {
             obj.get(k)
-                .map(|v| serde_json::from_value::<UnfurledMediaItem>(v.clone()).map_err(serde::de::Error::custom))
+                .map(|v| {
+                    serde_json::from_value::<UnfurledMediaItem>(v.clone())
+                        .map_err(serde::de::Error::custom)
+                })
                 .ok_or_else(|| serde::de::Error::custom(format!("missing `{k}` object")))?
         };
         let opt_channel_types = |k: &str| -> Option<Vec<u8>> {
             obj.get(k).and_then(|v| v.as_array()).map(|arr| {
-                arr.iter().filter_map(|x| x.as_u64().map(|y| y as u8)).collect()
+                arr.iter()
+                    .filter_map(|x| x.as_u64().map(|y| y as u8))
+                    .collect()
             })
         };
 
         let comp = match ty {
-            1 => Component::ActionRow { components: opt_components("components")?, id: opt_u32("id") },
+            1 => Component::ActionRow {
+                components: opt_components("components")?,
+                id: opt_u32("id"),
+            },
             5 => Component::UserSelect {
                 custom_id: take_str("custom_id")?,
                 placeholder: opt_str("placeholder"),
@@ -881,8 +1151,12 @@ impl<'de> Deserialize<'de> for Component {
                 disabled: opt_bool("disabled"),
             },
             9 => {
-                let accessory = obj.get("accessory")
-                    .map(|v| serde_json::from_value::<Component>(v.clone()).map_err(serde::de::Error::custom))
+                let accessory = obj
+                    .get("accessory")
+                    .map(|v| {
+                        serde_json::from_value::<Component>(v.clone())
+                            .map_err(serde::de::Error::custom)
+                    })
                     .transpose()?
                     .map(Box::new);
                 Component::Section {
@@ -891,7 +1165,10 @@ impl<'de> Deserialize<'de> for Component {
                     id: opt_u32("id"),
                 }
             }
-            10 => Component::TextDisplay { content: take_str("content")?, id: opt_u32("id") },
+            10 => Component::TextDisplay {
+                content: take_str("content")?,
+                id: opt_u32("id"),
+            },
             11 => Component::Thumbnail {
                 media: take_media("media")?,
                 description: opt_str("description"),
@@ -899,14 +1176,29 @@ impl<'de> Deserialize<'de> for Component {
                 id: opt_u32("id"),
             },
             12 => {
-                let items = obj.get("items")
-                    .map(|v| serde_json::from_value::<Vec<MediaGalleryItem>>(v.clone()).map_err(serde::de::Error::custom))
+                let items = obj
+                    .get("items")
+                    .map(|v| {
+                        serde_json::from_value::<Vec<MediaGalleryItem>>(v.clone())
+                            .map_err(serde::de::Error::custom)
+                    })
                     .transpose()?
                     .ok_or_else(|| serde::de::Error::custom("missing `items` array"))?;
-                Component::MediaGallery { items, id: opt_u32("id") }
+                Component::MediaGallery {
+                    items,
+                    id: opt_u32("id"),
+                }
             }
-            13 => Component::File { file: take_media("file")?, spoiler: opt_bool("spoiler"), id: opt_u32("id") },
-            14 => Component::Separator { divider: opt_bool("divider"), spacing: opt_u8("spacing"), id: opt_u32("id") },
+            13 => Component::File {
+                file: take_media("file")?,
+                spoiler: opt_bool("spoiler"),
+                id: opt_u32("id"),
+            },
+            14 => Component::Separator {
+                divider: opt_bool("divider"),
+                spacing: opt_u8("spacing"),
+                id: opt_u32("id"),
+            },
             17 => Component::Container {
                 components: opt_components("components")?,
                 accent_color: opt_u32("accent_color"),
@@ -914,8 +1206,12 @@ impl<'de> Deserialize<'de> for Component {
                 id: opt_u32("id"),
             },
             18 => {
-                let component = obj.get("component")
-                    .map(|v| serde_json::from_value::<Component>(v.clone()).map_err(serde::de::Error::custom))
+                let component = obj
+                    .get("component")
+                    .map(|v| {
+                        serde_json::from_value::<Component>(v.clone())
+                            .map_err(serde::de::Error::custom)
+                    })
                     .ok_or_else(|| serde::de::Error::custom("missing `component` object"))??;
                 Component::Label {
                     label: take_str("label")?,
@@ -932,8 +1228,12 @@ impl<'de> Deserialize<'de> for Component {
                 id: opt_u32("id"),
             },
             21 => {
-                let options = obj.get("options")
-                    .map(|v| serde_json::from_value::<Vec<RadioOption>>(v.clone()).map_err(serde::de::Error::custom))
+                let options = obj
+                    .get("options")
+                    .map(|v| {
+                        serde_json::from_value::<Vec<RadioOption>>(v.clone())
+                            .map_err(serde::de::Error::custom)
+                    })
                     .transpose()?
                     .ok_or_else(|| serde::de::Error::custom("missing `options` array"))?;
                 Component::RadioGroup {
@@ -944,8 +1244,12 @@ impl<'de> Deserialize<'de> for Component {
                 }
             }
             22 => {
-                let options = obj.get("options")
-                    .map(|v| serde_json::from_value::<Vec<RadioOption>>(v.clone()).map_err(serde::de::Error::custom))
+                let options = obj
+                    .get("options")
+                    .map(|v| {
+                        serde_json::from_value::<Vec<RadioOption>>(v.clone())
+                            .map_err(serde::de::Error::custom)
+                    })
                     .transpose()?
                     .ok_or_else(|| serde::de::Error::custom("missing `options` array"))?;
                 Component::CheckboxGroup {
@@ -963,7 +1267,11 @@ impl<'de> Deserialize<'de> for Component {
                 default: opt_bool("default"),
                 id: opt_u32("id"),
             },
-            other => return Err(serde::de::Error::custom(format!("unsupported component type tag: {other}"))),
+            other => {
+                return Err(serde::de::Error::custom(format!(
+                    "unsupported component type tag: {other}"
+                )))
+            }
         };
         Ok(comp)
     }
@@ -972,20 +1280,31 @@ impl<'de> Deserialize<'de> for Component {
 impl Component {
     /// Construct a [`Component::TextDisplay`] from a markdown string.
     pub fn text_display(content: impl Into<String>) -> Self {
-        Self::TextDisplay { content: content.into(), id: None }
+        Self::TextDisplay {
+            content: content.into(),
+            id: None,
+        }
     }
 
     /// Construct a [`Component::Section`] from a list of children, with no
     /// accessory.  Use [`Component::section_with_accessory`] to attach a
     /// thumbnail or button.
     pub fn section(components: Vec<Component>) -> Self {
-        Self::Section { components, accessory: None, id: None }
+        Self::Section {
+            components,
+            accessory: None,
+            id: None,
+        }
     }
 
     /// Construct a [`Component::Section`] with an accessory (typically a
     /// [`Component::Thumbnail`] or a button represented as a `Component`).
     pub fn section_with_accessory(components: Vec<Component>, accessory: Component) -> Self {
-        Self::Section { components, accessory: Some(Box::new(accessory)), id: None }
+        Self::Section {
+            components,
+            accessory: Some(Box::new(accessory)),
+            id: None,
+        }
     }
 
     /// Construct a [`Component::Thumbnail`] from a media URL.
@@ -1005,18 +1324,31 @@ impl Component {
 
     /// Construct a [`Component::File`] from an `attachment://…` URL.
     pub fn file(url: impl Into<String>) -> Self {
-        Self::File { file: UnfurledMediaItem::new(url), spoiler: None, id: None }
+        Self::File {
+            file: UnfurledMediaItem::new(url),
+            spoiler: None,
+            id: None,
+        }
     }
 
     /// Construct a [`Component::Separator`] (defaults: divider line, small
     /// spacing).  Pass `None` for either argument to omit it.
     pub fn separator(divider: Option<bool>, spacing: Option<u8>) -> Self {
-        Self::Separator { divider, spacing, id: None }
+        Self::Separator {
+            divider,
+            spacing,
+            id: None,
+        }
     }
 
     /// Construct a [`Component::Container`] holding the given children.
     pub fn container(components: Vec<Component>) -> Self {
-        Self::Container { components, accent_color: None, spoiler: None, id: None }
+        Self::Container {
+            components,
+            accent_color: None,
+            spoiler: None,
+            id: None,
+        }
     }
 
     /// Construct a [`Component::Label`] wrapping a single child input

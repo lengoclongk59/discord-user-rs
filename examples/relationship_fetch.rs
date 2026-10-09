@@ -5,7 +5,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use discord_user::operations::RelationshipOps;
 
     // Initialize tracing subscriber to see logs
-    tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
 
     let token = std::env::var("DISCORD_TOKEN").expect("DISCORD_TOKEN env var not set");
     println!("Initializing DiscordUser...");
@@ -22,10 +24,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Fetching relationships via HTTP...");
     match client.get_my_relationship().await {
         Ok(relationships) => {
-            println!("Successfully fetched {} relationships:", relationships.len());
+            println!(
+                "Successfully fetched {} relationships:",
+                relationships.len()
+            );
 
             for rel in relationships {
-                let username = rel.user.as_ref().map(|u| u.username.as_str()).unwrap_or_else(|| rel.id.as_str());
+                let username = rel
+                    .user
+                    .as_ref()
+                    .map(|u| u.username.as_str())
+                    .unwrap_or_else(|| rel.id.as_str());
                 println!("- {} (Type: {:?})", username, rel.relationship_type);
             }
         }

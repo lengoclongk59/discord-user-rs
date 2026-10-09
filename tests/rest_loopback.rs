@@ -494,7 +494,10 @@ async fn a_json_request_keeps_the_configured_content_type() {
     let (base, seen) = serve(vec![Reply::Status(200, Vec::new(), OK_MESSAGE)]).await;
     let headers = HashMap::from([
         ("authorization".to_string(), "TOKEN".to_string()),
-        ("content-type".to_string(), "application/json; charset=utf-8".to_string()),
+        (
+            "content-type".to_string(),
+            "application/json; charset=utf-8".to_string(),
+        ),
     ]);
     let http = DiscordHttpClient::with_headers(headers, None, false)
         .unwrap()

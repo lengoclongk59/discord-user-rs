@@ -19,7 +19,10 @@ use crate::{
     client::DiscordHttpClient,
     components::CreateActionRow,
     error::Result,
-    types::{AllowedMentions, Colour, Embed, EmbedAuthor, EmbedField, EmbedFooter, EmbedMedia, Message, MessageReference},
+    types::{
+        AllowedMentions, Colour, Embed, EmbedAuthor, EmbedField, EmbedFooter, EmbedMedia, Message,
+        MessageReference,
+    },
 };
 
 /// Builder for constructing Discord messages with a fluent API
@@ -85,7 +88,12 @@ impl<'a> MessageBuilder<'a> {
     /// guild.
     pub fn reply_to(mut self, message_id: impl Into<String>) -> Self {
         let msg_id = message_id.into();
-        self.reply_reference = Some(MessageReference { message_id: Some(msg_id), channel_id: self.channel_id.clone(), guild_id: self.guild_id.clone(), reference_type: None });
+        self.reply_reference = Some(MessageReference {
+            message_id: Some(msg_id),
+            channel_id: self.channel_id.clone(),
+            guild_id: self.guild_id.clone(),
+            reference_type: None,
+        });
         self
     }
 
@@ -95,7 +103,12 @@ impl<'a> MessageBuilder<'a> {
     /// * `message_id` - The ID of the message to reply to
     /// * `channel_id` - The channel ID where the message is
     /// * `guild_id` - Optional guild ID
-    pub fn reply_to_full(mut self, message_id: impl Into<String>, channel_id: impl Into<String>, guild_id: Option<impl Into<String>>) -> Self {
+    pub fn reply_to_full(
+        mut self,
+        message_id: impl Into<String>,
+        channel_id: impl Into<String>,
+        guild_id: Option<impl Into<String>>,
+    ) -> Self {
         self.reply_reference = Some(MessageReference {
             message_id: Some(message_id.into()),
             channel_id: Some(channel_id.into()),
@@ -230,7 +243,9 @@ impl<'a> MessageBuilder<'a> {
     /// - Any length limit is exceeded (validated before the HTTP call)
     /// - The API request fails
     pub async fn send(self) -> Result<Message> {
-        let channel_id = self.channel_id.ok_or_else(|| crate::error::DiscordError::InvalidRequest("Channel ID is required".into()))?;
+        let channel_id = self.channel_id.ok_or_else(|| {
+            crate::error::DiscordError::InvalidRequest("Channel ID is required".into())
+        })?;
 
         // Validate that we have something to send
         let has_content = self.content.as_ref().is_some_and(|c| !c.is_empty());
@@ -238,38 +253,61 @@ impl<'a> MessageBuilder<'a> {
         let has_stickers = !self.sticker_ids.is_empty();
 
         if !has_content && !has_embeds && !has_stickers {
-            return Err(crate::error::DiscordError::InvalidRequest("Message must have content, embeds, or stickers".into()));
+            return Err(crate::error::DiscordError::InvalidRequest(
+                "Message must have content, embeds, or stickers".into(),
+            ));
         }
 
         // Client-side length validation (mirrors Discord's hard limits)
         if let Some(ref content) = self.content {
             if content.len() > 2000 {
-                return Err(crate::error::DiscordError::InvalidRequest(format!("Message content too long: {} chars (max 2000)", content.len())));
+                return Err(crate::error::DiscordError::InvalidRequest(format!(
+                    "Message content too long: {} chars (max 2000)",
+                    content.len()
+                )));
             }
         }
         if self.embeds.len() > 10 {
-            return Err(crate::error::DiscordError::InvalidRequest(format!("Too many embeds: {} (max 10)", self.embeds.len())));
+            return Err(crate::error::DiscordError::InvalidRequest(format!(
+                "Too many embeds: {} (max 10)",
+                self.embeds.len()
+            )));
         }
         if self.sticker_ids.len() > 3 {
-            return Err(crate::error::DiscordError::InvalidRequest(format!("Too many stickers: {} (max 3)", self.sticker_ids.len())));
+            return Err(crate::error::DiscordError::InvalidRequest(format!(
+                "Too many stickers: {} (max 3)",
+                self.sticker_ids.len()
+            )));
         }
         for embed in &self.embeds {
             if let Some(ref title) = embed.title {
                 if title.len() > 256 {
-                    return Err(crate::error::DiscordError::InvalidRequest(format!("Embed title too long: {} chars (max 256)", title.len())));
+                    return Err(crate::error::DiscordError::InvalidRequest(format!(
+                        "Embed title too long: {} chars (max 256)",
+                        title.len()
+                    )));
                 }
             }
             if let Some(ref desc) = embed.description {
                 if desc.len() > 4096 {
-                    return Err(crate::error::DiscordError::InvalidRequest(format!("Embed description too long: {} chars (max 4096)", desc.len())));
+                    return Err(crate::error::DiscordError::InvalidRequest(format!(
+                        "Embed description too long: {} chars (max 4096)",
+                        desc.len()
+                    )));
                 }
             }
             for field in &embed.fields {
                 if field.name.len() > 256 {
-                    return Err(crate::error::DiscordError::InvalidRequest(format!("Embed field name too long: {} chars (max 256)", field.name.len())));
+                    return Err(crate::error::DiscordError::InvalidRequest(format!(
+                        "Embed field name too long: {} chars (max 256)",
+                        field.name.len()
+                    )));
                 }
                 if field.value.len() > 1024 {
-                    return Err(crate::error::DiscordError::InvalidRequest(format!("Embed field value too long: {} chars (max 1024)", field.value.len())));
+                    return Err(crate::error::DiscordError::InvalidRequest(format!(
+                        "Embed field value too long: {} chars (max 1024)",
+                        field.value.len()
+                    )));
                 }
             }
         }
@@ -310,15 +348,22 @@ impl<'a> MessageBuilder<'a> {
         }
 
         if let Some(am) = self.allowed_mentions {
-            payload["allowed_mentions"] = serde_json::to_value(&am).unwrap_or(serde_json::Value::Null);
+            payload["allowed_mentions"] =
+                serde_json::to_value(&am).unwrap_or(serde_json::Value::Null);
         }
 
         if !self.components.is_empty() {
-            payload["components"] = serde_json::Value::Array(self.components.iter().map(|row| row.to_json()).collect());
+            payload["components"] =
+                serde_json::Value::Array(self.components.iter().map(|row| row.to_json()).collect());
         }
 
         let c_id = channel_id.parse().unwrap_or(1);
-        self.http.post(crate::route::Route::CreateMessage { channel_id: c_id }, payload).await
+        self.http
+            .post(
+                crate::route::Route::CreateMessage { channel_id: c_id },
+                payload,
+            )
+            .await
     }
 }
 
@@ -384,36 +429,68 @@ impl EmbedBuilder {
 
     /// Set the footer text
     pub fn footer(mut self, text: impl Into<String>) -> Self {
-        self.footer = Some(EmbedFooter { text: text.into(), icon_url: None, proxy_icon_url: None });
+        self.footer = Some(EmbedFooter {
+            text: text.into(),
+            icon_url: None,
+            proxy_icon_url: None,
+        });
         self
     }
 
     /// Set the footer with text and icon
-    pub fn footer_with_icon(mut self, text: impl Into<String>, icon_url: impl Into<String>) -> Self {
-        self.footer = Some(EmbedFooter { text: text.into(), icon_url: Some(icon_url.into()), proxy_icon_url: None });
+    pub fn footer_with_icon(
+        mut self,
+        text: impl Into<String>,
+        icon_url: impl Into<String>,
+    ) -> Self {
+        self.footer = Some(EmbedFooter {
+            text: text.into(),
+            icon_url: Some(icon_url.into()),
+            proxy_icon_url: None,
+        });
         self
     }
 
     /// Set the embed image
     pub fn image(mut self, url: impl Into<String>) -> Self {
-        self.image = Some(EmbedMedia { url: Some(url.into()), proxy_url: None, height: None, width: None });
+        self.image = Some(EmbedMedia {
+            url: Some(url.into()),
+            proxy_url: None,
+            height: None,
+            width: None,
+        });
         self
     }
 
     /// Set the embed thumbnail
     pub fn thumbnail(mut self, url: impl Into<String>) -> Self {
-        self.thumbnail = Some(EmbedMedia { url: Some(url.into()), proxy_url: None, height: None, width: None });
+        self.thumbnail = Some(EmbedMedia {
+            url: Some(url.into()),
+            proxy_url: None,
+            height: None,
+            width: None,
+        });
         self
     }
 
     /// Set the embed author name
     pub fn author(mut self, name: impl Into<String>) -> Self {
-        self.author = Some(EmbedAuthor { name: Some(name.into()), url: None, icon_url: None, proxy_icon_url: None });
+        self.author = Some(EmbedAuthor {
+            name: Some(name.into()),
+            url: None,
+            icon_url: None,
+            proxy_icon_url: None,
+        });
         self
     }
 
     /// Set the embed author with full details
-    pub fn author_full(mut self, name: impl Into<String>, url: Option<impl Into<String>>, icon_url: Option<impl Into<String>>) -> Self {
+    pub fn author_full(
+        mut self,
+        name: impl Into<String>,
+        url: Option<impl Into<String>>,
+        icon_url: Option<impl Into<String>>,
+    ) -> Self {
         self.author = Some(EmbedAuthor {
             name: Some(name.into()),
             url: url.map(|u| u.into()),
@@ -424,8 +501,17 @@ impl EmbedBuilder {
     }
 
     /// Add a field to the embed
-    pub fn field(mut self, name: impl Into<String>, value: impl Into<String>, inline: bool) -> Self {
-        self.fields.push(EmbedField { name: name.into(), value: value.into(), inline });
+    pub fn field(
+        mut self,
+        name: impl Into<String>,
+        value: impl Into<String>,
+        inline: bool,
+    ) -> Self {
+        self.fields.push(EmbedField {
+            name: name.into(),
+            value: value.into(),
+            inline,
+        });
         self
     }
 
@@ -461,7 +547,13 @@ mod tests {
 
     #[test]
     fn test_embed_builder() {
-        let embed = EmbedBuilder::new().title("Test Title").description("Test Description").color(0xFF5733).field("Field 1", "Value 1", true).field("Field 2", "Value 2", false).build();
+        let embed = EmbedBuilder::new()
+            .title("Test Title")
+            .description("Test Description")
+            .color(0xFF5733)
+            .field("Field 1", "Value 1", true)
+            .field("Field 2", "Value 2", false)
+            .build();
 
         assert_eq!(embed.title, Some("Test Title".into()));
         assert_eq!(embed.description, Some("Test Description".into()));

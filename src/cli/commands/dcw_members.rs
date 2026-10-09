@@ -183,10 +183,16 @@ pub async fn dispatch(ctx: &Ctx, cmd: MemberCmd) -> Result<()> {
             }
         }
 
-        MemberCmd::Timeout { guild, user, until, reason } => {
+        MemberCmd::Timeout {
+            guild,
+            user,
+            until,
+            reason,
+        } => {
             let token = config::resolve_token(ctx.token_flag.clone())?;
             let api = WriteApi::new(&token);
-            api.member_timeout(&guild, &user, &until, reason.as_deref()).await?;
+            api.member_timeout(&guild, &user, &until, reason.as_deref())
+                .await?;
             if ctx.json {
                 output::print_json(&json!({
                     "guild_id": guild,
@@ -202,10 +208,15 @@ pub async fn dispatch(ctx: &Ctx, cmd: MemberCmd) -> Result<()> {
             }
         }
 
-        MemberCmd::Untimeout { guild, user, reason } => {
+        MemberCmd::Untimeout {
+            guild,
+            user,
+            reason,
+        } => {
             let token = config::resolve_token(ctx.token_flag.clone())?;
             let api = WriteApi::new(&token);
-            api.member_untimeout(&guild, &user, reason.as_deref()).await?;
+            api.member_untimeout(&guild, &user, reason.as_deref())
+                .await?;
             if ctx.json {
                 output::print_json(&json!({
                     "guild_id": guild,
@@ -220,7 +231,12 @@ pub async fn dispatch(ctx: &Ctx, cmd: MemberCmd) -> Result<()> {
             }
         }
 
-        MemberCmd::Kick { guild, user, yes, reason } => {
+        MemberCmd::Kick {
+            guild,
+            user,
+            yes,
+            reason,
+        } => {
             if !yes {
                 print!(
                     "Kick user {} from guild {}? Type 'yes' to confirm: ",
@@ -300,7 +316,9 @@ pub async fn dispatch(ctx: &Ctx, cmd: MemberCmd) -> Result<()> {
                 output::print_json(&result);
             } else {
                 match result["pruned"].as_u64() {
-                    Some(n) => output::success(&format!("Pruned {} member(s) from guild {}", n, guild)),
+                    Some(n) => {
+                        output::success(&format!("Pruned {} member(s) from guild {}", n, guild))
+                    }
                     None => output::success(&format!("Prune started in guild {}", guild)),
                 }
             }
@@ -318,7 +336,10 @@ pub async fn dispatch(ctx: &Ctx, cmd: MemberCmd) -> Result<()> {
                 output::print_json(&result);
             } else {
                 let count = result.as_array().map(|a| a.len()).unwrap_or(0);
-                output::success(&format!("{} member(s) matching '{}' in guild {}", count, query, guild));
+                output::success(&format!(
+                    "{} member(s) matching '{}' in guild {}",
+                    count, query, guild
+                ));
             }
         }
     }

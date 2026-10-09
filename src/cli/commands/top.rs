@@ -47,6 +47,9 @@ pub fn run(ctx: &Ctx, channel: Option<&str>, hours: Option<i64>, limit: i64) -> 
             ]
         })
         .collect();
-    output::print_table(&["#", "sender", "messages", "first seen", "last seen"], &table_rows);
+    output::print_table(
+        &["#", "sender", "messages", "first seen", "last seen"],
+        &table_rows,
+    );
     Ok(())
 }

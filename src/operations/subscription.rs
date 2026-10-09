@@ -2,7 +2,9 @@
 //!
 //! Endpoints under `/skus/{sku.id}/subscriptions`.
 
-use crate::{context::DiscordContext, error::Result, route::Route, types::monetization::Subscription};
+use crate::{
+    context::DiscordContext, error::Result, route::Route, types::monetization::Subscription,
+};
 
 impl<T: DiscordContext + Send + Sync> SubscriptionOps for T {}
 
@@ -32,7 +34,11 @@ pub trait SubscriptionOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn list_sku_subscriptions(&self, sku_id: u64, query: Option<SkuSubscriptionListQuery>) -> Result<Vec<Subscription>> {
+    async fn list_sku_subscriptions(
+        &self,
+        sku_id: u64,
+        query: Option<SkuSubscriptionListQuery>,
+    ) -> Result<Vec<Subscription>> {
         let q = query.unwrap_or_default();
         self.http()
             .get(Route::SkuSubscriptions {
@@ -52,7 +58,16 @@ pub trait SubscriptionOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure or if the subscription is
     /// not found.
-    async fn get_sku_subscription(&self, sku_id: u64, subscription_id: u64) -> Result<Subscription> {
-        self.http().get(Route::SkuSubscription { sku_id, subscription_id }).await
+    async fn get_sku_subscription(
+        &self,
+        sku_id: u64,
+        subscription_id: u64,
+    ) -> Result<Subscription> {
+        self.http()
+            .get(Route::SkuSubscription {
+                sku_id,
+                subscription_id,
+            })
+            .await
     }
 }

@@ -22,7 +22,11 @@ pub struct InvalidSnowflakeError(pub String);
 
 impl fmt::Display for InvalidSnowflakeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Invalid snowflake ID '{}': must be a numeric non-zero value", self.0)
+        write!(
+            f,
+            "Invalid snowflake ID '{}': must be a numeric non-zero value",
+            self.0
+        )
     }
 }
 
@@ -147,10 +151,22 @@ impl_id_type!(WebhookId, "A webhook ID wrapper for type safety");
 impl_id_type!(ApplicationId, "An application ID wrapper for type safety");
 impl_id_type!(InteractionId, "An interaction ID wrapper for type safety");
 impl_id_type!(StickerId, "A sticker ID wrapper for type safety");
-impl_id_type!(ScheduledEventId, "A guild scheduled event ID wrapper for type safety");
-impl_id_type!(AutoModerationRuleId, "An auto-moderation rule ID wrapper for type safety");
-impl_id_type!(SoundboardSoundId, "A soundboard sound ID wrapper for type safety");
-impl_id_type!(CommandId, "An application command ID wrapper for type safety");
+impl_id_type!(
+    ScheduledEventId,
+    "A guild scheduled event ID wrapper for type safety"
+);
+impl_id_type!(
+    AutoModerationRuleId,
+    "An auto-moderation rule ID wrapper for type safety"
+);
+impl_id_type!(
+    SoundboardSoundId,
+    "A soundboard sound ID wrapper for type safety"
+);
+impl_id_type!(
+    CommandId,
+    "An application command ID wrapper for type safety"
+);
 
 #[cfg(test)]
 mod tests {

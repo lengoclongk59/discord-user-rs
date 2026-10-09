@@ -14,8 +14,15 @@ pub trait AutoModerationOps: DiscordContext {
     ///
     /// # Permissions
     /// Requires MANAGE_GUILD permission.
-    async fn get_auto_moderation_rules(&self, guild_id: &GuildId) -> Result<Vec<AutoModerationRule>> {
-        self.http().get(Route::GetAutoModerationRules { guild_id: guild_id.get() }).await
+    async fn get_auto_moderation_rules(
+        &self,
+        guild_id: &GuildId,
+    ) -> Result<Vec<AutoModerationRule>> {
+        self.http()
+            .get(Route::GetAutoModerationRules {
+                guild_id: guild_id.get(),
+            })
+            .await
     }
 
     /// Get a single auto-moderation rule by ID.
@@ -26,8 +33,17 @@ pub trait AutoModerationOps: DiscordContext {
     ///
     /// # Permissions
     /// Requires MANAGE_GUILD permission.
-    async fn get_auto_moderation_rule(&self, guild_id: &GuildId, rule_id: &AutoModerationRuleId) -> Result<AutoModerationRule> {
-        self.http().get(Route::GetAutoModerationRule { guild_id: guild_id.get(), rule_id: rule_id.get() }).await
+    async fn get_auto_moderation_rule(
+        &self,
+        guild_id: &GuildId,
+        rule_id: &AutoModerationRuleId,
+    ) -> Result<AutoModerationRule> {
+        self.http()
+            .get(Route::GetAutoModerationRule {
+                guild_id: guild_id.get(),
+                rule_id: rule_id.get(),
+            })
+            .await
     }
 
     /// Create a new auto-moderation rule.
@@ -40,8 +56,19 @@ pub trait AutoModerationOps: DiscordContext {
     ///
     /// # Permissions
     /// Requires MANAGE_GUILD permission.
-    async fn create_auto_moderation_rule(&self, guild_id: &GuildId, req: AutoModerationRuleRequest) -> Result<AutoModerationRule> {
-        self.http().post(Route::CreateAutoModerationRule { guild_id: guild_id.get() }, req).await
+    async fn create_auto_moderation_rule(
+        &self,
+        guild_id: &GuildId,
+        req: AutoModerationRuleRequest,
+    ) -> Result<AutoModerationRule> {
+        self.http()
+            .post(
+                Route::CreateAutoModerationRule {
+                    guild_id: guild_id.get(),
+                },
+                req,
+            )
+            .await
     }
 
     /// Edit an existing auto-moderation rule.
@@ -53,8 +80,21 @@ pub trait AutoModerationOps: DiscordContext {
     ///
     /// # Permissions
     /// Requires MANAGE_GUILD permission.
-    async fn edit_auto_moderation_rule(&self, guild_id: &GuildId, rule_id: &AutoModerationRuleId, req: AutoModerationRuleRequest) -> Result<AutoModerationRule> {
-        self.http().patch(Route::EditAutoModerationRule { guild_id: guild_id.get(), rule_id: rule_id.get() }, req).await
+    async fn edit_auto_moderation_rule(
+        &self,
+        guild_id: &GuildId,
+        rule_id: &AutoModerationRuleId,
+        req: AutoModerationRuleRequest,
+    ) -> Result<AutoModerationRule> {
+        self.http()
+            .patch(
+                Route::EditAutoModerationRule {
+                    guild_id: guild_id.get(),
+                    rule_id: rule_id.get(),
+                },
+                req,
+            )
+            .await
     }
 
     /// Delete an auto-moderation rule permanently.
@@ -64,7 +104,16 @@ pub trait AutoModerationOps: DiscordContext {
     ///
     /// # Permissions
     /// Requires MANAGE_GUILD permission.
-    async fn delete_auto_moderation_rule(&self, guild_id: &GuildId, rule_id: &AutoModerationRuleId) -> Result<()> {
-        self.http().delete(Route::DeleteAutoModerationRule { guild_id: guild_id.get(), rule_id: rule_id.get() }).await
+    async fn delete_auto_moderation_rule(
+        &self,
+        guild_id: &GuildId,
+        rule_id: &AutoModerationRuleId,
+    ) -> Result<()> {
+        self.http()
+            .delete(Route::DeleteAutoModerationRule {
+                guild_id: guild_id.get(),
+                rule_id: rule_id.get(),
+            })
+            .await
     }
 }

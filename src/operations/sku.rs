@@ -18,6 +18,8 @@ pub trait SkuOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
     async fn list_skus(&self, application_id: u64) -> Result<Vec<Sku>> {
-        self.http().get(Route::ApplicationSkus { application_id }).await
+        self.http()
+            .get(Route::ApplicationSkus { application_id })
+            .await
     }
 }

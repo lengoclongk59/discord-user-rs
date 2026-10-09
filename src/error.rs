@@ -44,7 +44,12 @@ pub enum DiscordError {
 
     /// Rate limited by Discord
     #[error("Rate limited, retry after {retry_after}s (global: {global}, bucket: {bucket:?}, scope: {scope:?})")]
-    RateLimited { retry_after: f64, bucket: Option<String>, global: bool, scope: Option<String> },
+    RateLimited {
+        retry_after: f64,
+        bucket: Option<String>,
+        global: bool,
+        scope: Option<String>,
+    },
 
     /// Account verification required
     #[error("Account verification required")]
@@ -270,7 +275,20 @@ impl DiscordError {
             Self::ServiceError { .. } => true,
 
             // Auth errors, invalid data, permissions, etc. are not retryable
-            Self::VerificationRequired | Self::CaptchaRequired { .. } | Self::AuthenticationFailed | Self::NotInitialized | Self::InvalidToken | Self::NotFound { .. } | Self::PermissionDenied { .. } | Self::InvalidRequest(_) | Self::MaxRetriesExceeded | Self::Json(_) | Self::Other(_) | Self::Model(_) | Self::UnexpectedStatusCode { .. } | Self::InvalidRequestThresholdReached { .. } => false,
+            Self::VerificationRequired
+            | Self::CaptchaRequired { .. }
+            | Self::AuthenticationFailed
+            | Self::NotInitialized
+            | Self::InvalidToken
+            | Self::NotFound { .. }
+            | Self::PermissionDenied { .. }
+            | Self::InvalidRequest(_)
+            | Self::MaxRetriesExceeded
+            | Self::Json(_)
+            | Self::Other(_)
+            | Self::Model(_)
+            | Self::UnexpectedStatusCode { .. }
+            | Self::InvalidRequestThresholdReached { .. } => false,
         }
     }
 }
@@ -295,7 +313,10 @@ where
     where
         C: std::fmt::Display + Send + Sync + 'static,
     {
-        self.map_err(|e| DiscordError::Context { context: context.to_string(), source: Box::new(e.into()) })
+        self.map_err(|e| DiscordError::Context {
+            context: context.to_string(),
+            source: Box::new(e.into()),
+        })
     }
 
     fn with_context<C, F>(self, f: F) -> Result<T>
@@ -303,6 +324,9 @@ where
         C: std::fmt::Display + Send + Sync + 'static,
         F: FnOnce() -> C,
     {
-        self.map_err(|e| DiscordError::Context { context: f().to_string(), source: Box::new(e.into()) })
+        self.map_err(|e| DiscordError::Context {
+            context: f().to_string(),
+            source: Box::new(e.into()),
+        })
     }
 }

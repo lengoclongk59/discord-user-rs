@@ -9,7 +9,10 @@ use crate::{
     route::Route,
     types::{
         lobby::{Lobby, LobbyMember},
-        requests::{AddLobbyMemberRequest, BulkUpdateLobbyMembersRequest, CreateLobbyRequest, LinkChannelToLobbyRequest, ModifyLobbyRequest},
+        requests::{
+            AddLobbyMemberRequest, BulkUpdateLobbyMembersRequest, CreateLobbyRequest,
+            LinkChannelToLobbyRequest, ModifyLobbyRequest,
+        },
     },
 };
 
@@ -68,8 +71,15 @@ pub trait LobbyOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn add_lobby_member(&self, lobby_id: u64, user_id: u64, body: AddLobbyMemberRequest) -> Result<LobbyMember> {
-        self.http().put(Route::LobbyMember { lobby_id, user_id }, body).await
+    async fn add_lobby_member(
+        &self,
+        lobby_id: u64,
+        user_id: u64,
+        body: AddLobbyMemberRequest,
+    ) -> Result<LobbyMember> {
+        self.http()
+            .put(Route::LobbyMember { lobby_id, user_id }, body)
+            .await
     }
 
     /// Remove a lobby member.
@@ -79,7 +89,9 @@ pub trait LobbyOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
     async fn remove_lobby_member(&self, lobby_id: u64, user_id: u64) -> Result<()> {
-        self.http().delete(Route::LobbyMember { lobby_id, user_id }).await
+        self.http()
+            .delete(Route::LobbyMember { lobby_id, user_id })
+            .await
     }
 
     /// Bulk replace the full lobby member set.
@@ -89,8 +101,14 @@ pub trait LobbyOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn bulk_update_lobby_members(&self, lobby_id: u64, body: BulkUpdateLobbyMembersRequest) -> Result<Lobby> {
-        self.http().patch(Route::LobbyMembers { lobby_id }, body).await
+    async fn bulk_update_lobby_members(
+        &self,
+        lobby_id: u64,
+        body: BulkUpdateLobbyMembersRequest,
+    ) -> Result<Lobby> {
+        self.http()
+            .patch(Route::LobbyMembers { lobby_id }, body)
+            .await
     }
 
     /// Leave a lobby as the current user.
@@ -109,8 +127,14 @@ pub trait LobbyOps: DiscordContext {
     ///
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
-    async fn link_channel_to_lobby(&self, lobby_id: u64, body: LinkChannelToLobbyRequest) -> Result<Lobby> {
-        self.http().patch(Route::LobbyChannelLink { lobby_id }, body).await
+    async fn link_channel_to_lobby(
+        &self,
+        lobby_id: u64,
+        body: LinkChannelToLobbyRequest,
+    ) -> Result<Lobby> {
+        self.http()
+            .patch(Route::LobbyChannelLink { lobby_id }, body)
+            .await
     }
 
     /// Remove the channel link from a lobby.
@@ -120,6 +144,8 @@ pub trait LobbyOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::Http`] on HTTP failure.
     async fn unlink_channel_from_lobby(&self, lobby_id: u64) -> Result<()> {
-        self.http().delete(Route::LobbyChannelLink { lobby_id }).await
+        self.http()
+            .delete(Route::LobbyChannelLink { lobby_id })
+            .await
     }
 }

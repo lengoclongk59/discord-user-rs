@@ -185,14 +185,26 @@ mod tests {
     fn bulk_delete_bounds() {
         assert!(validate_bulk_delete_count(2).is_ok());
         assert!(validate_bulk_delete_count(100).is_ok());
-        assert!(matches!(validate_bulk_delete_count(1).unwrap_err(), ModelError::BulkDeleteAmount(1)));
-        assert!(matches!(validate_bulk_delete_count(101).unwrap_err(), ModelError::BulkDeleteAmount(101)));
+        assert!(matches!(
+            validate_bulk_delete_count(1).unwrap_err(),
+            ModelError::BulkDeleteAmount(1)
+        ));
+        assert!(matches!(
+            validate_bulk_delete_count(101).unwrap_err(),
+            ModelError::BulkDeleteAmount(101)
+        ));
     }
 
     #[test]
     fn name_bounds() {
         assert!(validate_name("ab", 2, 32).is_ok());
-        assert!(matches!(validate_name("a", 2, 32).unwrap_err(), ModelError::NameTooShort(1, 2)));
-        assert!(matches!(validate_name(&"a".repeat(33), 2, 32).unwrap_err(), ModelError::NameTooLong(33, 32)));
+        assert!(matches!(
+            validate_name("a", 2, 32).unwrap_err(),
+            ModelError::NameTooShort(1, 2)
+        ));
+        assert!(matches!(
+            validate_name(&"a".repeat(33), 2, 32).unwrap_err(),
+            ModelError::NameTooLong(33, 32)
+        ));
     }
 }

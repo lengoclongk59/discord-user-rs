@@ -62,7 +62,10 @@ pub fn codeblock(text: &str, language: Option<&str>) -> String {
 
 /// Prefix each line with `> ` to produce a block quote.
 pub fn quote(text: &str) -> String {
-    text.lines().map(|l| format!("> {}", l)).collect::<Vec<_>>().join("\n")
+    text.lines()
+        .map(|l| format!("> {}", l))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Produce a multi-line block quote with `>>> ` prefix (all following lines

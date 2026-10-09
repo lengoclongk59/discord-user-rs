@@ -89,10 +89,7 @@ pub async fn dispatch(ctx: &Ctx, cmd: AppCommandCmd) -> Result<()> {
             }
         }
 
-        AppCommandCmd::Get {
-            command_id,
-            guild,
-        } => {
+        AppCommandCmd::Get { command_id, guild } => {
             let app_id = api.app_id().await?;
             let result = api
                 .command_get(&app_id, guild.as_deref(), &command_id)
@@ -174,7 +171,8 @@ pub async fn dispatch(ctx: &Ctx, cmd: AppCommandCmd) -> Result<()> {
                  (a live session_id + nonce posted to the undocumented /interactions endpoint), \
                  which this CLI does not implement. Use `dc command list` to inspect registered \
                  commands, or `dc command create` to register one (bot/application tokens).",
-                command_name, channel
+                command_name,
+                channel
             ));
         }
     }

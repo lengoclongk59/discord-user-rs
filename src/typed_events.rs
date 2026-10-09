@@ -7,7 +7,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::types::{AuditLogChange, Channel, Guild, Member, Message, PartialApplication, Relationship, Role, User};
+use crate::types::{
+    AuditLogChange, Channel, Guild, Member, Message, PartialApplication, Relationship, Role, User,
+};
 
 // ==================== Typed Event Structs ====================
 
@@ -1544,13 +1546,23 @@ impl TypedEvent {
     pub fn from_raw(event_type: &str, data: Value) -> Self {
         macro_rules! parse {
             ($variant:ident) => {
-                serde_json::from_value(data.clone()).map(TypedEvent::$variant).unwrap_or_else(|_| TypedEvent::Unknown { event_type: event_type.to_string(), data })
+                serde_json::from_value(data.clone())
+                    .map(TypedEvent::$variant)
+                    .unwrap_or_else(|_| TypedEvent::Unknown {
+                        event_type: event_type.to_string(),
+                        data,
+                    })
             };
         }
         match event_type {
             "READY" => parse!(Ready),
             "RESUMED" => TypedEvent::Resumed(ResumedEvent {}),
-            "MESSAGE_CREATE" => serde_json::from_value(data.clone()).map(|e| TypedEvent::MessageCreate(Box::new(e))).unwrap_or_else(|_| TypedEvent::Unknown { event_type: event_type.to_string(), data }),
+            "MESSAGE_CREATE" => serde_json::from_value(data.clone())
+                .map(|e| TypedEvent::MessageCreate(Box::new(e)))
+                .unwrap_or_else(|_| TypedEvent::Unknown {
+                    event_type: event_type.to_string(),
+                    data,
+                }),
             "MESSAGE_UPDATE" => parse!(MessageUpdate),
             "MESSAGE_DELETE" => parse!(MessageDelete),
             "MESSAGE_DELETE_BULK" => parse!(MessageDeleteBulk),
@@ -1579,7 +1591,12 @@ impl TypedEvent {
             "GUILD_BAN_ADD" => parse!(GuildBanAdd),
             "GUILD_BAN_REMOVE" => parse!(GuildBanRemove),
             "USER_UPDATE" => parse!(UserUpdate),
-            "INTERACTION_CREATE" => serde_json::from_value(data.clone()).map(|e| TypedEvent::InteractionCreate(Box::new(e))).unwrap_or_else(|_| TypedEvent::Unknown { event_type: event_type.to_string(), data }),
+            "INTERACTION_CREATE" => serde_json::from_value(data.clone())
+                .map(|e| TypedEvent::InteractionCreate(Box::new(e)))
+                .unwrap_or_else(|_| TypedEvent::Unknown {
+                    event_type: event_type.to_string(),
+                    data,
+                }),
             "THREAD_CREATE" => parse!(ThreadCreate),
             "THREAD_UPDATE" => parse!(ThreadUpdate),
             "THREAD_DELETE" => parse!(ThreadDelete),
@@ -1603,7 +1620,12 @@ impl TypedEvent {
             "SOUNDBOARD_SOUND_CREATE" => parse!(SoundboardSoundCreate),
             "SOUNDBOARD_SOUND_UPDATE" => parse!(SoundboardSoundUpdate),
             "SOUNDBOARD_SOUND_DELETE" => parse!(SoundboardSoundDelete),
-            "GUILD_MEMBERS_CHUNK" => serde_json::from_value(data.clone()).map(|e| TypedEvent::GuildMembersChunk(Box::new(e))).unwrap_or_else(|_| TypedEvent::Unknown { event_type: event_type.to_string(), data }),
+            "GUILD_MEMBERS_CHUNK" => serde_json::from_value(data.clone())
+                .map(|e| TypedEvent::GuildMembersChunk(Box::new(e)))
+                .unwrap_or_else(|_| TypedEvent::Unknown {
+                    event_type: event_type.to_string(),
+                    data,
+                }),
             "MESSAGE_POLL_VOTE_ADD" => parse!(MessagePollVoteAdd),
             "MESSAGE_POLL_VOTE_REMOVE" => parse!(MessagePollVoteRemove),
             "ENTITLEMENT_CREATE" => parse!(EntitlementCreate),
@@ -1630,7 +1652,12 @@ impl TypedEvent {
             "VOICE_CHANNEL_START_TIME_UPDATE" => parse!(VoiceChannelStartTimeUpdate),
             "SESSIONS_REPLACE" => parse!(SessionsReplace),
             "CONTENT_INVENTORY_INBOX_STALE" => parse!(ContentInventoryInboxStale),
-            "READY_SUPPLEMENTAL" => serde_json::from_value(data.clone()).map(|e| TypedEvent::ReadySupplemental(Box::new(e))).unwrap_or_else(|_| TypedEvent::Unknown { event_type: event_type.to_string(), data }),
+            "READY_SUPPLEMENTAL" => serde_json::from_value(data.clone())
+                .map(|e| TypedEvent::ReadySupplemental(Box::new(e)))
+                .unwrap_or_else(|_| TypedEvent::Unknown {
+                    event_type: event_type.to_string(),
+                    data,
+                }),
             "USER_SETTINGS_PROTO_UPDATE" => parse!(UserSettingsProtoUpdate),
             "CONVERSATION_SUMMARY_UPDATE" => parse!(ConversationSummaryUpdate),
             "EMBEDDED_ACTIVITY_UPDATE_V2" => parse!(EmbeddedActivityUpdateV2),
@@ -1640,7 +1667,12 @@ impl TypedEvent {
             "MESSAGE_ACK" => parse!(MessageAck),
             "CHANNEL_RECIPIENT_ADD" => parse!(ChannelRecipientAdd),
             "CHANNEL_RECIPIENT_REMOVE" => parse!(ChannelRecipientRemove),
-            "NOTIFICATION_CENTER_ITEM_CREATE" => serde_json::from_value(data.clone()).map(|e| TypedEvent::NotificationCenterItemCreate(Box::new(e))).unwrap_or_else(|_| TypedEvent::Unknown { event_type: event_type.to_string(), data }),
+            "NOTIFICATION_CENTER_ITEM_CREATE" => serde_json::from_value(data.clone())
+                .map(|e| TypedEvent::NotificationCenterItemCreate(Box::new(e)))
+                .unwrap_or_else(|_| TypedEvent::Unknown {
+                    event_type: event_type.to_string(),
+                    data,
+                }),
             "REACTION_NOTIFICATION_SENT" => parse!(ReactionNotificationSent),
             "GENERIC_PUSH_NOTIFICATION_SENT" => parse!(GenericPushNotificationSent),
             "RELATIONSHIP_UPDATE" => parse!(RelationshipUpdate),
@@ -1652,7 +1684,10 @@ impl TypedEvent {
             "SUBSCRIPTION_CREATE" => parse!(SubscriptionCreate),
             "SUBSCRIPTION_UPDATE" => parse!(SubscriptionUpdate),
             "SUBSCRIPTION_DELETE" => parse!(SubscriptionDelete),
-            _ => TypedEvent::Unknown { event_type: event_type.to_string(), data },
+            _ => TypedEvent::Unknown {
+                event_type: event_type.to_string(),
+                data,
+            },
         }
     }
 
@@ -1731,7 +1766,9 @@ impl TypedEvent {
             TypedEvent::ThreadMembersUpdate(_) => "THREAD_MEMBERS_UPDATE",
             TypedEvent::InviteCreate(_) => "INVITE_CREATE",
             TypedEvent::InviteDelete(_) => "INVITE_DELETE",
-            TypedEvent::ApplicationCommandPermissionsUpdate(_) => "APPLICATION_COMMAND_PERMISSIONS_UPDATE",
+            TypedEvent::ApplicationCommandPermissionsUpdate(_) => {
+                "APPLICATION_COMMAND_PERMISSIONS_UPDATE"
+            }
             TypedEvent::VoiceChannelEffectSend(_) => "VOICE_CHANNEL_EFFECT_SEND",
             TypedEvent::GuildEmojisUpdate(_) => "GUILD_EMOJIS_UPDATE",
             TypedEvent::GuildStickersUpdate(_) => "GUILD_STICKERS_UPDATE",
@@ -1761,7 +1798,9 @@ impl TypedEvent {
             TypedEvent::UserApplicationIdentityUpdate(_) => "USER_APPLICATION_IDENTITY_UPDATE",
             TypedEvent::UserRequiredActionUpdate(_) => "USER_REQUIRED_ACTION_UPDATE",
             TypedEvent::DmSettingsUpsellShow(_) => "DM_SETTINGS_UPSELL_SHOW",
-            TypedEvent::GuildApplicationCommandIndexUpdate(_) => "GUILD_APPLICATION_COMMAND_INDEX_UPDATE",
+            TypedEvent::GuildApplicationCommandIndexUpdate(_) => {
+                "GUILD_APPLICATION_COMMAND_INDEX_UPDATE"
+            }
             TypedEvent::GuildAppliedBoostsUpdate(_) => "GUILD_APPLIED_BOOSTS_UPDATE",
             TypedEvent::Unknown { event_type, .. } => event_type,
         }

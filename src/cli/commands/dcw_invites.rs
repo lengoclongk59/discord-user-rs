@@ -68,10 +68,7 @@ pub async fn dispatch(ctx: &Ctx, cmd: InviteCmd) -> Result<()> {
                 output::print_json(&result);
             } else {
                 let code = result["code"].as_str().unwrap_or("?");
-                output::success(&format!(
-                    "Created invite: https://discord.gg/{}",
-                    code
-                ));
+                output::success(&format!("Created invite: https://discord.gg/{}", code));
             }
         }
 

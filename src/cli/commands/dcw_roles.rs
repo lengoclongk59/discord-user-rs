@@ -100,13 +100,18 @@ pub async fn dispatch(ctx: &Ctx, cmd: RoleCmd) -> Result<()> {
             if let Some(p) = permissions {
                 body.insert("permissions".into(), serde_json::json!(p));
             }
-            let result = api.role_create(&guild, serde_json::Value::Object(body)).await?;
+            let result = api
+                .role_create(&guild, serde_json::Value::Object(body))
+                .await?;
             if ctx.json {
                 output::print_json(&result);
             } else {
                 let id = result["id"].as_str().unwrap_or("?");
                 let rname = result["name"].as_str().unwrap_or("?");
-                output::success(&format!("Created role '{}' ({}) in guild {}", rname, id, guild));
+                output::success(&format!(
+                    "Created role '{}' ({}) in guild {}",
+                    rname, id, guild
+                ));
             }
         }
 
@@ -139,18 +144,26 @@ pub async fn dispatch(ctx: &Ctx, cmd: RoleCmd) -> Result<()> {
                 output::warn("No fields provided — nothing to edit.");
                 return Ok(());
             }
-            let result = api.role_edit(&guild, &role, serde_json::Value::Object(body)).await?;
+            let result = api
+                .role_edit(&guild, &role, serde_json::Value::Object(body))
+                .await?;
             if ctx.json {
                 output::print_json(&result);
             } else {
                 let rname = result["name"].as_str().unwrap_or("?");
-                output::success(&format!("Updated role '{}' ({}) in guild {}", rname, role, guild));
+                output::success(&format!(
+                    "Updated role '{}' ({}) in guild {}",
+                    rname, role, guild
+                ));
             }
         }
 
         RoleCmd::Delete { guild, role, yes } => {
             if !yes {
-                print!("Delete role {} in guild {}? Type 'yes' to confirm: ", role, guild);
+                print!(
+                    "Delete role {} in guild {}? Type 'yes' to confirm: ",
+                    role, guild
+                );
                 io::stdout().flush()?;
                 let mut input = String::new();
                 io::stdin().read_line(&mut input)?;

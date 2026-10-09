@@ -191,7 +191,11 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
             .await
         }
         Cmd::Dc(DcCmd::Events { guild }) => dc_events::run(&ctx, &guild).await,
-        Cmd::Dc(DcCmd::Download { channel, output, hours }) => dc_download::run(&ctx, &channel, &output, hours).await,
+        Cmd::Dc(DcCmd::Download {
+            channel,
+            output,
+            hours,
+        }) => dc_download::run(&ctx, &channel, &output, hours).await,
         Cmd::Dc(DcCmd::Snapshot { guild, output }) => dc_snapshot::run(&ctx, &guild, output).await,
         Cmd::Dc(DcCmd::Send {
             channel,
@@ -212,7 +216,16 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
                 nonce,
                 suppress_mentions: no_mentions,
             };
-            dc_send::run(&ctx, &channel, &content, reply.as_deref(), &files, &stickers, opts).await
+            dc_send::run(
+                &ctx,
+                &channel,
+                &content,
+                reply.as_deref(),
+                &files,
+                &stickers,
+                opts,
+            )
+            .await
         }
         Cmd::Dc(DcCmd::Edit {
             channel,

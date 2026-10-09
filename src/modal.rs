@@ -56,7 +56,11 @@ impl ModalBuilder {
     ///   back in the `INTERACTION_CREATE` event when the user submits.
     /// * `title` — text shown in the modal header (max 45 chars).
     pub fn new(custom_id: impl Into<String>, title: impl Into<String>) -> Self {
-        Self { custom_id: custom_id.into(), title: title.into(), components: Vec::new() }
+        Self {
+            custom_id: custom_id.into(),
+            title: title.into(),
+            components: Vec::new(),
+        }
     }
 
     /// Add a single-line text input.
@@ -69,7 +73,11 @@ impl ModalBuilder {
     }
 
     /// Add a single-line text input that the user must fill in.
-    pub fn required_short_field(mut self, custom_id: impl Into<String>, label: impl Into<String>) -> Self {
+    pub fn required_short_field(
+        mut self,
+        custom_id: impl Into<String>,
+        label: impl Into<String>,
+    ) -> Self {
         self.push_text_input(custom_id.into(), label.into(), TEXT_SHORT, None, true);
         self
     }
@@ -77,18 +85,47 @@ impl ModalBuilder {
     /// Add a multi-line paragraph text input.
     ///
     /// * `placeholder` — grey hint text shown inside the input when empty.
-    pub fn paragraph_field(mut self, custom_id: impl Into<String>, label: impl Into<String>, placeholder: Option<&str>) -> Self {
-        self.push_text_input(custom_id.into(), label.into(), TEXT_PARAGRAPH, placeholder.map(str::to_string), false);
+    pub fn paragraph_field(
+        mut self,
+        custom_id: impl Into<String>,
+        label: impl Into<String>,
+        placeholder: Option<&str>,
+    ) -> Self {
+        self.push_text_input(
+            custom_id.into(),
+            label.into(),
+            TEXT_PARAGRAPH,
+            placeholder.map(str::to_string),
+            false,
+        );
         self
     }
 
     /// Add a required multi-line paragraph text input.
-    pub fn required_paragraph_field(mut self, custom_id: impl Into<String>, label: impl Into<String>, placeholder: Option<&str>) -> Self {
-        self.push_text_input(custom_id.into(), label.into(), TEXT_PARAGRAPH, placeholder.map(str::to_string), true);
+    pub fn required_paragraph_field(
+        mut self,
+        custom_id: impl Into<String>,
+        label: impl Into<String>,
+        placeholder: Option<&str>,
+    ) -> Self {
+        self.push_text_input(
+            custom_id.into(),
+            label.into(),
+            TEXT_PARAGRAPH,
+            placeholder.map(str::to_string),
+            true,
+        );
         self
     }
 
-    fn push_text_input(&mut self, custom_id: String, label: String, style: u8, placeholder: Option<String>, required: bool) {
+    fn push_text_input(
+        &mut self,
+        custom_id: String,
+        label: String,
+        style: u8,
+        placeholder: Option<String>,
+        required: bool,
+    ) {
         let mut input = json!({
             "type": 4,  // TEXT_INPUT component type
             "custom_id": custom_id,
@@ -144,7 +181,9 @@ mod tests {
 
     #[test]
     fn short_field_wraps_in_action_row() {
-        let m = ModalBuilder::new("id", "Title").short_field("f1", "Name").build();
+        let m = ModalBuilder::new("id", "Title")
+            .short_field("f1", "Name")
+            .build();
         let rows = m["components"].as_array().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["type"], 1); // action row
@@ -157,7 +196,9 @@ mod tests {
 
     #[test]
     fn paragraph_with_placeholder() {
-        let m = ModalBuilder::new("id", "T").paragraph_field("bio", "Bio", Some("Enter bio…")).build();
+        let m = ModalBuilder::new("id", "T")
+            .paragraph_field("bio", "Bio", Some("Enter bio…"))
+            .build();
         let inner = &m["components"][0]["components"][0];
         assert_eq!(inner["style"], TEXT_PARAGRAPH as i64);
         assert_eq!(inner["placeholder"], "Enter bio…");
@@ -165,7 +206,10 @@ mod tests {
 
     #[test]
     fn two_fields() {
-        let m = ModalBuilder::new("id", "T").short_field("f1", "First").paragraph_field("f2", "Second", None).build();
+        let m = ModalBuilder::new("id", "T")
+            .short_field("f1", "First")
+            .paragraph_field("f2", "Second", None)
+            .build();
         assert_eq!(m["components"].as_array().unwrap().len(), 2);
     }
 

@@ -142,7 +142,9 @@ pub async fn dispatch(ctx: &Ctx, cmd: ChannelCmd) -> Result<()> {
                 output::warn("No fields provided — nothing to edit.");
                 return Ok(());
             }
-            let result = api.channel_edit(&channel, serde_json::Value::Object(body)).await?;
+            let result = api
+                .channel_edit(&channel, serde_json::Value::Object(body))
+                .await?;
             if ctx.json {
                 output::print_json(&result);
             } else {
@@ -151,7 +153,11 @@ pub async fn dispatch(ctx: &Ctx, cmd: ChannelCmd) -> Result<()> {
             }
         }
 
-        ChannelCmd::Delete { channel, yes, reason } => {
+        ChannelCmd::Delete {
+            channel,
+            yes,
+            reason,
+        } => {
             if !yes {
                 print!("Delete channel {}? Type 'yes' to confirm: ", channel);
                 io::stdout().flush()?;

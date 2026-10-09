@@ -111,9 +111,7 @@ pub async fn dispatch(ctx: &Ctx, cmd: StageCmd) -> Result<()> {
         }
 
         StageCmd::Stop { channel, yes } => {
-            if !yes
-                && !output::confirm(&format!("Stop stage instance in channel {}?", channel))?
-            {
+            if !yes && !output::confirm(&format!("Stop stage instance in channel {}?", channel))? {
                 return Ok(());
             }
             api.stage_stop(&channel).await?;

@@ -9,6 +9,7 @@ use crate::cli::config;
 use crate::cli::output;
 
 #[derive(Subcommand, Debug)]
+#[allow(clippy::large_enum_variant)] // parsed once per process
 pub enum ComposeCmd {
     /// Send a message with an embed.
     Embed {
@@ -126,9 +127,18 @@ pub async fn dispatch(ctx: &Ctx, cmd: ComposeCmd) -> Result<()> {
                 }
                 let inline = parts
                     .get(2)
-                    .map(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "inline" | "true" | "1" | "yes"))
+                    .map(|s| {
+                        matches!(
+                            s.trim().to_ascii_lowercase().as_str(),
+                            "inline" | "true" | "1" | "yes"
+                        )
+                    })
                     .unwrap_or(false);
-                parsed_fields.push((parts[0].trim().to_string(), parts[1].trim().to_string(), inline));
+                parsed_fields.push((
+                    parts[0].trim().to_string(),
+                    parts[1].trim().to_string(),
+                    inline,
+                ));
             }
             let spec = crate::cli::api_compose::EmbedSpec {
                 title,

@@ -196,8 +196,14 @@ pub async fn dispatch(ctx: &Ctx, cmd: BanCmd) -> Result<()> {
             if ctx.json {
                 output::print_json(&result);
             } else {
-                let banned = result["banned_users"].as_array().map(|a| a.len()).unwrap_or(0);
-                let failed = result["failed_users"].as_array().map(|a| a.len()).unwrap_or(0);
+                let banned = result["banned_users"]
+                    .as_array()
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                let failed = result["failed_users"]
+                    .as_array()
+                    .map(|a| a.len())
+                    .unwrap_or(0);
                 output::success(&format!(
                     "Bulk ban in guild {}: {} banned, {} failed",
                     guild, banned, failed

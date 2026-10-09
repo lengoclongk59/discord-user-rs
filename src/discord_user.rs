@@ -127,7 +127,10 @@ impl DiscordUser {
     /// Create a new DiscordUser with custom headers
     pub fn with_headers(headers: HashMap<String, String>) -> Option<Self> {
         let http = DiscordHttpClient::with_headers(headers.clone(), None, false)?;
-        let _token = headers.iter().find(|(k, _)| k.to_lowercase() == "authorization").map(|(_, v)| v.clone())?;
+        let _token = headers
+            .iter()
+            .find(|(k, _)| k.to_lowercase() == "authorization")
+            .map(|(_, v)| v.clone())?;
 
         Some(Self {
             http,
@@ -185,12 +188,19 @@ impl DiscordUser {
         use crate::operations::RelationshipOps;
 
         let token = self.http.token();
-        let (mut gateway, event_receiver) = Gateway::new_with_capabilities(token, self.custom_status, self.event_buffer_size, self.capabilities);
+        let (mut gateway, event_receiver) = Gateway::new_with_capabilities(
+            token,
+            self.custom_status,
+            self.event_buffer_size,
+            self.capabilities,
+        );
         if let Some(intents) = self.intents {
             gateway = gateway.with_intents(intents);
         }
 
-        gateway.connect_with_auto_reconnect(self.max_reconnect_attempts).await?;
+        gateway
+            .connect_with_auto_reconnect(self.max_reconnect_attempts)
+            .await?;
 
         self.gateway = Some(gateway);
         self.event_receiver = Some(event_receiver);
@@ -228,7 +238,9 @@ impl DiscordUser {
                                 }
                                 #[cfg(feature = "cache")]
                                 "GUILD_CREATE" | "GUILD_UPDATE" => {
-                                    if let Ok(guild) = serde_json::from_value::<Guild>(event.data.clone()) {
+                                    if let Ok(guild) =
+                                        serde_json::from_value::<Guild>(event.data.clone())
+                                    {
                                         for channel in &guild.channels {
                                             cache.upsert_channel(channel.clone());
                                         }
@@ -247,16 +259,21 @@ impl DiscordUser {
                                 // Cache message authors and mentioned users; store the message
                                 #[cfg(feature = "cache")]
                                 "MESSAGE_CREATE" | "MESSAGE_UPDATE" => {
-                                    if let Ok(author) = serde_json::from_value::<User>(event.data["author"].clone()) {
+                                    if let Ok(author) =
+                                        serde_json::from_value::<User>(event.data["author"].clone())
+                                    {
                                         cache.upsert_user(author);
                                     }
-                                    if let Ok(msg) = serde_json::from_value::<Message>(event.data.clone()) {
+                                    if let Ok(msg) =
+                                        serde_json::from_value::<Message>(event.data.clone())
+                                    {
                                         cache.upsert_message(msg);
                                     }
                                 }
                                 #[cfg(feature = "cache")]
                                 "MESSAGE_DELETE" => {
-                                    let channel_id = event.data["channel_id"].as_str().unwrap_or("");
+                                    let channel_id =
+                                        event.data["channel_id"].as_str().unwrap_or("");
                                     let message_id = event.data["id"].as_str().unwrap_or("");
                                     if !channel_id.is_empty() && !message_id.is_empty() {
                                         cache.remove_message(channel_id, message_id);
@@ -264,7 +281,8 @@ impl DiscordUser {
                                 }
                                 #[cfg(feature = "cache")]
                                 "MESSAGE_DELETE_BULK" => {
-                                    let channel_id = event.data["channel_id"].as_str().unwrap_or("");
+                                    let channel_id =
+                                        event.data["channel_id"].as_str().unwrap_or("");
                                     if let Some(ids) = event.data["ids"].as_array() {
                                         for id in ids {
                                             if let Some(mid) = id.as_str() {
@@ -276,20 +294,26 @@ impl DiscordUser {
                                 // Cache guild members' user objects
                                 #[cfg(feature = "cache")]
                                 "GUILD_MEMBER_ADD" | "GUILD_MEMBER_UPDATE" => {
-                                    if let Ok(member_user) = serde_json::from_value::<User>(event.data["user"].clone()) {
+                                    if let Ok(member_user) =
+                                        serde_json::from_value::<User>(event.data["user"].clone())
+                                    {
                                         cache.upsert_user(member_user);
                                     }
                                 }
                                 // Keep current user up to date
                                 #[cfg(feature = "cache")]
                                 "USER_UPDATE" => {
-                                    if let Ok(updated_user) = serde_json::from_value::<User>(event.data.clone()) {
+                                    if let Ok(updated_user) =
+                                        serde_json::from_value::<User>(event.data.clone())
+                                    {
                                         cache.upsert_user(updated_user);
                                     }
                                 }
                                 #[cfg(feature = "cache")]
                                 "CHANNEL_CREATE" | "CHANNEL_UPDATE" => {
-                                    if let Ok(channel) = serde_json::from_value::<Channel>(event.data.clone()) {
+                                    if let Ok(channel) =
+                                        serde_json::from_value::<Channel>(event.data.clone())
+                                    {
                                         cache.upsert_channel(channel);
                                     }
                                 }
@@ -301,7 +325,9 @@ impl DiscordUser {
                                 }
                                 #[cfg(feature = "cache")]
                                 "GUILD_ROLE_CREATE" | "GUILD_ROLE_UPDATE" => {
-                                    if let Ok(role) = serde_json::from_value::<Role>(event.data["role"].clone()) {
+                                    if let Ok(role) =
+                                        serde_json::from_value::<Role>(event.data["role"].clone())
+                                    {
                                         cache.upsert_role(role);
                                     }
                                 }
@@ -460,19 +486,25 @@ impl DiscordUser {
 
     /// Internal helper to register a typed event handler with deserialization.
     /// This centralizes the common logic for all typed event handlers.
-    async fn on_typed_event_impl<T, F>(&self, event_type: &'static str, callback: F) -> EventSubscription
+    async fn on_typed_event_impl<T, F>(
+        &self,
+        event_type: &'static str,
+        callback: F,
+    ) -> EventSubscription
     where
         T: serde::de::DeserializeOwned + 'static,
         F: Fn(T) + Send + Sync + 'static,
     {
         self.events
-            .on_event(event_type, move |event| match serde_json::from_value(event.data.clone()) {
-                Ok(typed) => callback(typed),
-                Err(e) => warn!(
-                    event_type = event_type,
-                    error = %e,
-                    "Failed to deserialize typed event"
-                ),
+            .on_event(event_type, move |event| {
+                match serde_json::from_value(event.data.clone()) {
+                    Ok(typed) => callback(typed),
+                    Err(e) => warn!(
+                        event_type = event_type,
+                        error = %e,
+                        "Failed to deserialize typed event"
+                    ),
+                }
             })
             .await
     }
@@ -484,7 +516,8 @@ impl DiscordUser {
     {
         self.events
             .on_any_event(move |event| {
-                let typed = crate::typed_events::TypedEvent::from_raw(&event.event_type, event.data);
+                let typed =
+                    crate::typed_events::TypedEvent::from_raw(&event.event_type, event.data);
                 callback(typed);
             })
             .await
@@ -537,17 +570,33 @@ impl DiscordUser {
     /// Pass `self_mute` / `self_deaf` to set initial mute/deaf state.
     ///
     /// Mirrors serenity's voice `join()` entry point.
-    pub async fn join_voice_channel(&self, guild_id: &crate::types::GuildId, channel_id: &crate::types::ChannelId, self_mute: bool, self_deaf: bool) -> Result<()> {
-        let gateway = self.gateway.as_ref().ok_or(crate::error::DiscordError::NotInitialized)?;
-        gateway.send_voice_state_update(guild_id.get(), Some(channel_id.get()), self_mute, self_deaf).await
+    pub async fn join_voice_channel(
+        &self,
+        guild_id: &crate::types::GuildId,
+        channel_id: &crate::types::ChannelId,
+        self_mute: bool,
+        self_deaf: bool,
+    ) -> Result<()> {
+        let gateway = self
+            .gateway
+            .as_ref()
+            .ok_or(crate::error::DiscordError::NotInitialized)?;
+        gateway
+            .send_voice_state_update(guild_id.get(), Some(channel_id.get()), self_mute, self_deaf)
+            .await
     }
 
     /// Leave the current voice channel in a guild via gateway opcode 4.
     ///
     /// Sends a Voice State Update with `channel_id = null`.
     pub async fn leave_voice_channel(&self, guild_id: &crate::types::GuildId) -> Result<()> {
-        let gateway = self.gateway.as_ref().ok_or(crate::error::DiscordError::NotInitialized)?;
-        gateway.send_voice_state_update(guild_id.get(), None, false, false).await
+        let gateway = self
+            .gateway
+            .as_ref()
+            .ok_or(crate::error::DiscordError::NotInitialized)?;
+        gateway
+            .send_voice_state_update(guild_id.get(), None, false, false)
+            .await
     }
 
     /// Reconnect to the gateway (disconnect then init)
@@ -569,8 +618,16 @@ impl DiscordUser {
     /// into a single struct.  Mirrors serenity's `ShardRunnerInfo`.
     pub async fn connection_info(&self) -> ConnectionInfo {
         match self.gateway.as_ref() {
-            Some(gw) => ConnectionInfo { stage: gw.stage().await, latency: gw.latency().await, connected: true },
-            None => ConnectionInfo { stage: crate::types::ConnectionStage::Disconnected, latency: None, connected: false },
+            Some(gw) => ConnectionInfo {
+                stage: gw.stage().await,
+                latency: gw.latency().await,
+                connected: true,
+            },
+            None => ConnectionInfo {
+                stage: crate::types::ConnectionStage::Disconnected,
+                latency: None,
+                connected: false,
+            },
         }
     }
 }
@@ -632,7 +689,11 @@ impl From<ReadyEventUser> for User {
 
 /// Handle READY event: populate user data and relationships from the event
 /// payload
-async fn handle_ready_event(data: &serde_json::Value, user: &Arc<RwLock<Option<User>>>, relationships: &Arc<RwLock<Vec<Relationship>>>) {
+async fn handle_ready_event(
+    data: &serde_json::Value,
+    user: &Arc<RwLock<Option<User>>>,
+    relationships: &Arc<RwLock<Vec<Relationship>>>,
+) {
     // Parse and store user data
     if let Some(user_data) = data.get("user") {
         if let Ok(ready_user) = serde_json::from_value::<ReadyEventUser>(user_data.clone()) {
@@ -649,7 +710,10 @@ async fn handle_ready_event(data: &serde_json::Value, user: &Arc<RwLock<Option<U
 }
 
 /// Handle RELATIONSHIP_ADD event: add or update a relationship in the list
-async fn handle_relationship_add(data: &serde_json::Value, relationships: &Arc<RwLock<Vec<Relationship>>>) {
+async fn handle_relationship_add(
+    data: &serde_json::Value,
+    relationships: &Arc<RwLock<Vec<Relationship>>>,
+) {
     if let Ok(rel) = serde_json::from_value::<Relationship>(data.clone()) {
         let mut rels = relationships.write().await;
         // Update existing relationship or add new one
@@ -662,7 +726,10 @@ async fn handle_relationship_add(data: &serde_json::Value, relationships: &Arc<R
 }
 
 /// Handle RELATIONSHIP_REMOVE event: remove a relationship from the list
-async fn handle_relationship_remove(data: &serde_json::Value, relationships: &Arc<RwLock<Vec<Relationship>>>) {
+async fn handle_relationship_remove(
+    data: &serde_json::Value,
+    relationships: &Arc<RwLock<Vec<Relationship>>>,
+) {
     if let Some(id) = data.get("id").and_then(|v| v.as_str()) {
         let mut rels = relationships.write().await;
         rels.retain(|r| r.id != id);
@@ -789,9 +856,12 @@ impl DiscordUserBuilder {
 
     /// Build the DiscordUser
     pub fn build(self) -> Result<DiscordUser> {
-        let token = self.token.ok_or_else(|| crate::error::DiscordError::InvalidRequest("Token is required".into()))?;
+        let token = self.token.ok_or_else(|| {
+            crate::error::DiscordError::InvalidRequest("Token is required".into())
+        })?;
 
-        let mut http = DiscordHttpClient::new(&token, self.proxy, self.ratelimiter_disabled).with_resend_policy(self.resend_policy);
+        let mut http = DiscordHttpClient::new(&token, self.proxy, self.ratelimiter_disabled)
+            .with_resend_policy(self.resend_policy);
         if let Some(cb) = self.ratelimit_callback {
             http.set_ratelimit_callback(cb);
         }

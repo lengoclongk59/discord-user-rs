@@ -173,7 +173,9 @@ pub async fn dispatch(ctx: &Ctx, cmd: GuildCmd) -> Result<()> {
                 output::warn("No fields provided — nothing to edit.");
                 return Ok(());
             }
-            let result = api.guild_edit(&guild, serde_json::Value::Object(body)).await?;
+            let result = api
+                .guild_edit(&guild, serde_json::Value::Object(body))
+                .await?;
             if ctx.json {
                 output::print_json(&result);
             } else {
@@ -278,7 +280,8 @@ pub async fn dispatch(ctx: &Ctx, cmd: GuildCmd) -> Result<()> {
             {
                 return Ok(());
             }
-            api.guild_integration_delete(&guild, &integration_id).await?;
+            api.guild_integration_delete(&guild, &integration_id)
+                .await?;
             if ctx.json {
                 output::print_json(
                     &serde_json::json!({ "deleted": integration_id, "guild": guild }),
@@ -322,11 +325,7 @@ pub async fn dispatch(ctx: &Ctx, cmd: GuildCmd) -> Result<()> {
         }
 
         GuildCmd::TemplateDelete { guild, code, yes } => {
-            if !yes
-                && !output::confirm(&format!(
-                    "Delete template {} from guild {}?",
-                    code, guild
-                ))?
+            if !yes && !output::confirm(&format!("Delete template {} from guild {}?", code, guild))?
             {
                 return Ok(());
             }

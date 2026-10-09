@@ -50,19 +50,28 @@ impl ImageHash {
     /// Pass `None` for `size` to omit the query parameter.
     pub fn user_avatar_url(&self, user_id: u64, size: Option<ImageSize>) -> String {
         let ext = if self.is_animated() { "gif" } else { "webp" };
-        Self::with_size(format!("{CDN_BASE}/avatars/{user_id}/{}.{ext}", self.0), size)
+        Self::with_size(
+            format!("{CDN_BASE}/avatars/{user_id}/{}.{ext}", self.0),
+            size,
+        )
     }
 
     /// Build a guild icon URL.
     pub fn guild_icon_url(&self, guild_id: u64, size: Option<ImageSize>) -> String {
         let ext = if self.is_animated() { "gif" } else { "webp" };
-        Self::with_size(format!("{CDN_BASE}/icons/{guild_id}/{}.{ext}", self.0), size)
+        Self::with_size(
+            format!("{CDN_BASE}/icons/{guild_id}/{}.{ext}", self.0),
+            size,
+        )
     }
 
     /// Build a guild banner URL.
     pub fn guild_banner_url(&self, guild_id: u64, size: Option<ImageSize>) -> String {
         let ext = if self.is_animated() { "gif" } else { "webp" };
-        Self::with_size(format!("{CDN_BASE}/banners/{guild_id}/{}.{ext}", self.0), size)
+        Self::with_size(
+            format!("{CDN_BASE}/banners/{guild_id}/{}.{ext}", self.0),
+            size,
+        )
     }
 
     fn with_size(url: String, size: Option<ImageSize>) -> String {

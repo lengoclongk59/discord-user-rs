@@ -13,10 +13,7 @@ use crate::route::Route;
 fn validate_topic(topic: &str) -> Result<()> {
     let len = topic.chars().count();
     if !(1..=120).contains(&len) {
-        return Err(anyhow!(
-            "topic must be 1-120 characters (got {})",
-            len
-        ));
+        return Err(anyhow!("topic must be 1-120 characters (got {})", len));
     }
     Ok(())
 }

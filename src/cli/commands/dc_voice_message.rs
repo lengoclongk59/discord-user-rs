@@ -3,7 +3,7 @@
 //!
 //! A voice message is an ordinary multipart attachment upload with the message
 //! `flags` IS_VOICE_MESSAGE bit set and the attachment carrying `duration_secs`
-//! + `waveform` metadata. True audio duration probing is out of scope: when
+//! and `waveform` metadata. True audio duration probing is out of scope: when
 //! `--duration` is omitted we send a sane default (1.0s). When `--waveform` is
 //! omitted we generate a short placeholder waveform (a simple ramp) and
 //! base64-encode it.

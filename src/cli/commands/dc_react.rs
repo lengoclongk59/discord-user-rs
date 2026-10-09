@@ -20,7 +20,7 @@ pub async fn run(
     parse_snowflake(channel)?;
     parse_snowflake(message)?;
     validate_emoji(emoji)?;
-    
+
     let token = config::resolve_token(ctx.token_flag.clone())?;
     let api = WriteApi::new(&token);
 

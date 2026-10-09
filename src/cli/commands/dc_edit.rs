@@ -12,7 +12,7 @@ pub async fn run(ctx: &Ctx, channel: &str, message: &str, content: &str) -> Resu
     parse_snowflake(channel)?;
     parse_snowflake(message)?;
     validate_content(content)?;
-    
+
     let token = config::resolve_token(ctx.token_flag.clone())?;
     let api = WriteApi::new(&token);
 
@@ -25,7 +25,10 @@ pub async fn run(ctx: &Ctx, channel: &str, message: &str, content: &str) -> Resu
             "content": msg.content,
         }));
     } else {
-        output::success(&format!("Edited message {} in channel {}", message, channel));
+        output::success(&format!(
+            "Edited message {} in channel {}",
+            message, channel
+        ));
     }
     Ok(())
 }

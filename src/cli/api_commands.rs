@@ -29,10 +29,9 @@ impl WriteApi {
             .get::<Value>(Route::Custom("oauth2/applications/@me".into()))
             .await
             .map_err(|e| anyhow!(e.to_string()))?;
-        app["id"]
-            .as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow!("could not determine application id from /oauth2/applications/@me"))
+        app["id"].as_str().map(|s| s.to_string()).ok_or_else(|| {
+            anyhow!("could not determine application id from /oauth2/applications/@me")
+        })
     }
 
     /// List application commands — global, or guild-scoped when `guild_id`

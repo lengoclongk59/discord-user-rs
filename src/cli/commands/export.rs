@@ -19,20 +19,22 @@ pub fn run(ctx: &Ctx, args: ExportArgs) -> Result<()> {
     // Validate output path safety before any operations
     if let Some(path) = &args.output {
         use std::path::Component;
-        
+
         // 1. Check for path traversal attempts
         for component in path.components() {
             if matches!(component, Component::ParentDir) {
                 anyhow::bail!("Path traversal not allowed: {}", path.display());
             }
         }
-        
+
         // 2. Check if file exists and get confirmation
-        if path.exists() && !output::confirm(&format!("File {} exists. Overwrite?", path.display()))? {
+        if path.exists()
+            && !output::confirm(&format!("File {} exists. Overwrite?", path.display()))?
+        {
             output::dim("Aborted.");
             return Ok(());
         }
-        
+
         // 3. Validate against restricted directories
         // We check before opening to provide clear errors, then verify again after open
         let check_restricted = |p: &std::path::Path| -> Result<()> {
@@ -40,12 +42,15 @@ pub fn run(ctx: &Ctx, args: ExportArgs) -> Result<()> {
                 // If file doesn't exist, canonicalize parent
                 p.parent()
                     .and_then(|parent| parent.canonicalize().ok())
-                    .ok_or_else(|| anyhow::anyhow!("Cannot verify output path safety: {}", p.display()))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Cannot verify output path safety: {}", p.display())
+                    })
             })?;
-            
+
             #[cfg(unix)]
             {
-                let canonical_str = canonical.to_str()
+                let canonical_str = canonical
+                    .to_str()
                     .ok_or_else(|| anyhow::anyhow!("Invalid path encoding"))?;
                 const RESTRICTED: &[&str] = &["/etc", "/sys", "/proc", "/boot", "/dev"];
                 for restricted in RESTRICTED {
@@ -54,13 +59,16 @@ pub fn run(ctx: &Ctx, args: ExportArgs) -> Result<()> {
                     }
                 }
             }
-            
+
             #[cfg(windows)]
             {
                 let canonical_upper = canonical.to_string_lossy().to_uppercase();
                 const RESTRICTED: &[&str] = &[
-                    "C:\\WINDOWS", "C:\\SYSTEM32", "C:\\PROGRAM FILES",
-                    "C:\\PROGRAMDATA", "C:\\BOOT"
+                    "C:\\WINDOWS",
+                    "C:\\SYSTEM32",
+                    "C:\\PROGRAM FILES",
+                    "C:\\PROGRAMDATA",
+                    "C:\\BOOT",
                 ];
                 for restricted in RESTRICTED {
                     if canonical_upper.starts_with(restricted) {
@@ -68,10 +76,10 @@ pub fn run(ctx: &Ctx, args: ExportArgs) -> Result<()> {
                     }
                 }
             }
-            
+
             Ok(())
         };
-        
+
         check_restricted(path)?;
     }
 
@@ -99,7 +107,13 @@ pub fn run(ctx: &Ctx, args: ExportArgs) -> Result<()> {
         ExportFormat::Text => {
             for m in &msgs {
                 let ts = m.timestamp.format("%Y-%m-%d %H:%M:%S");
-                writeln!(writer, "[{}] {}: {}", ts, m.sender_name, m.content.replace('\n', " "))?;
+                writeln!(
+                    writer,
+                    "[{}] {}: {}",
+                    ts,
+                    m.sender_name,
+                    m.content.replace('\n', " ")
+                )?;
             }
         }
     }
@@ -107,7 +121,11 @@ pub fn run(ctx: &Ctx, args: ExportArgs) -> Result<()> {
     writer.flush()?;
 
     if let Some(path) = &args.output {
-        output::success(&format!("Exported {} messages to {}", msgs.len(), path.display()));
+        output::success(&format!(
+            "Exported {} messages to {}",
+            msgs.len(),
+            path.display()
+        ));
     }
     Ok(())
 }

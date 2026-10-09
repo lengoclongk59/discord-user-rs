@@ -26,13 +26,12 @@ pub async fn run(
 
     // A search needs at least one constraint. An empty keyword is only valid
     // when another filter is present.
-    let content = if keyword.is_empty() { None } else { Some(keyword) };
-    if content.is_none()
-        && author.is_none()
-        && mentions.is_none()
-        && has.is_none()
-        && !pinned
-    {
+    let content = if keyword.is_empty() {
+        None
+    } else {
+        Some(keyword)
+    };
+    if content.is_none() && author.is_none() && mentions.is_none() && has.is_none() && !pinned {
         bail!("provide a keyword or at least one of --author, --mentions, --has, --pinned");
     }
 

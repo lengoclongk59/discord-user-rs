@@ -87,7 +87,10 @@ struct MessageRing {
 
 impl MessageRing {
     fn new(max: usize) -> Self {
-        Self { messages: VecDeque::with_capacity(max.min(128)), max }
+        Self {
+            messages: VecDeque::with_capacity(max.min(128)),
+            max,
+        }
     }
 
     fn push(&mut self, msg: Message) {
@@ -183,7 +186,10 @@ impl Cache {
     /// Create a cache that keeps at most `max_messages` messages per channel.
     /// Pass `0` to disable message caching entirely.
     pub fn with_max_messages(max_messages: usize) -> Self {
-        Self::with_settings(CacheSettings { max_messages, ..CacheSettings::default() })
+        Self::with_settings(CacheSettings {
+            max_messages,
+            ..CacheSettings::default()
+        })
     }
 
     /// Return a reference to the active cache settings.
@@ -202,7 +208,7 @@ impl Cache {
             // Atomic check: only remove if timestamp exists and is expired
             if let Some(ts_ref) = self.guild_timestamps.get(guild_id) {
                 if ts_ref.elapsed() > ttl {
-                    drop(ts_ref);  // Release read lock before removal
+                    drop(ts_ref); // Release read lock before removal
                     self.guilds.remove(guild_id);
                     self.guild_timestamps.remove(guild_id);
                     return None;
@@ -219,7 +225,12 @@ impl Cache {
     /// the duration of the iteration.
     pub fn guilds(&self) -> Vec<Guild> {
         if let Some(ttl) = self.settings.time_to_live {
-            let expired: Vec<String> = self.guild_timestamps.iter().filter(|r| r.value().elapsed() > ttl).map(|r| r.key().clone()).collect();
+            let expired: Vec<String> = self
+                .guild_timestamps
+                .iter()
+                .filter(|r| r.value().elapsed() > ttl)
+                .map(|r| r.key().clone())
+                .collect();
             for id in expired {
                 self.guilds.remove(&id);
                 self.guild_timestamps.remove(&id);
@@ -245,7 +256,7 @@ impl Cache {
             // Atomic check: only remove if timestamp exists and is expired
             if let Some(ts_ref) = self.user_timestamps.get(user_id) {
                 if ts_ref.elapsed() > ttl {
-                    drop(ts_ref);  // Release read lock before removal
+                    drop(ts_ref); // Release read lock before removal
                     self.users.remove(user_id);
                     self.user_timestamps.remove(user_id);
                     return None;
@@ -258,7 +269,12 @@ impl Cache {
     /// Return all cached users (excluding any TTL-expired entries).
     pub fn users(&self) -> Vec<User> {
         if let Some(ttl) = self.settings.time_to_live {
-            let expired: Vec<String> = self.user_timestamps.iter().filter(|r| r.value().elapsed() > ttl).map(|r| r.key().clone()).collect();
+            let expired: Vec<String> = self
+                .user_timestamps
+                .iter()
+                .filter(|r| r.value().elapsed() > ttl)
+                .map(|r| r.key().clone())
+                .collect();
             for id in expired {
                 self.users.remove(&id);
                 self.user_timestamps.remove(&id);
@@ -282,7 +298,10 @@ impl Cache {
 
     /// Return all cached messages for a channel, oldest first.
     pub fn channel_messages(&self, channel_id: &str) -> Vec<Message> {
-        self.messages.get(channel_id).map(|r| r.all()).unwrap_or_default()
+        self.messages
+            .get(channel_id)
+            .map(|r| r.all())
+            .unwrap_or_default()
     }
 
     /// Total number of cached messages across all channels.
@@ -330,7 +349,8 @@ impl Cache {
     /// false.
     pub(crate) fn upsert_guild(&self, guild: Guild) {
         if self.settings.cache_guilds {
-            self.guild_timestamps.insert(guild.id.clone(), Instant::now());
+            self.guild_timestamps
+                .insert(guild.id.clone(), Instant::now());
             self.guilds.insert(guild.id.clone(), guild);
         }
     }
@@ -356,7 +376,10 @@ impl Cache {
             return;
         }
         let max = self.settings.max_messages;
-        self.messages.entry(msg.channel_id.clone()).or_insert_with(|| MessageRing::new(max)).push(msg);
+        self.messages
+            .entry(msg.channel_id.clone())
+            .or_insert_with(|| MessageRing::new(max))
+            .push(msg);
     }
 
     /// Remove a message from its channel ring.
@@ -411,7 +434,10 @@ mod tests {
         let cache = Cache::new();
         cache.upsert_guild(make_guild("222", "Old Name"));
         cache.upsert_guild(make_guild("222", "New Name"));
-        assert_eq!(cache.guild("222").unwrap().name.as_deref(), Some("New Name"));
+        assert_eq!(
+            cache.guild("222").unwrap().name.as_deref(),
+            Some("New Name")
+        );
         assert_eq!(cache.guild_count(), 1);
     }
 
@@ -482,7 +508,9 @@ mod tests {
     fn message_cache_stores_and_retrieves() {
         let cache = Cache::new();
         cache.upsert_message(make_msg("ch1", "m1", "hello"));
-        let msg = cache.message("ch1", "m1").expect("message should be cached");
+        let msg = cache
+            .message("ch1", "m1")
+            .expect("message should be cached");
         assert_eq!(msg.content, "hello");
     }
 
@@ -494,7 +522,10 @@ mod tests {
         cache.upsert_message(make_msg("ch2", "2", "second"));
         cache.upsert_message(make_msg("ch2", "3", "third"));
         cache.upsert_message(make_msg("ch2", "4", "fourth"));
-        assert!(cache.message("ch2", "1").is_none(), "oldest should be evicted");
+        assert!(
+            cache.message("ch2", "1").is_none(),
+            "oldest should be evicted"
+        );
         assert!(cache.message("ch2", "4").is_some());
         assert_eq!(cache.channel_messages("ch2").len(), 3);
     }
@@ -516,28 +547,41 @@ mod tests {
 
     #[test]
     fn settings_cache_guilds_false_skips_upsert() {
-        let cache = Cache::with_settings(CacheSettings { cache_guilds: false, ..CacheSettings::default() });
+        let cache = Cache::with_settings(CacheSettings {
+            cache_guilds: false,
+            ..CacheSettings::default()
+        });
         cache.upsert_guild(make_guild("g1", "Ignored"));
         assert!(cache.guild("g1").is_none());
     }
 
     #[test]
     fn settings_cache_users_false_skips_upsert() {
-        let cache = Cache::with_settings(CacheSettings { cache_users: false, ..CacheSettings::default() });
+        let cache = Cache::with_settings(CacheSettings {
+            cache_users: false,
+            ..CacheSettings::default()
+        });
         cache.upsert_user(make_user("u99", "Ghost"));
         assert!(cache.user("u99").is_none());
     }
 
     #[test]
     fn settings_cache_messages_false_skips_upsert() {
-        let cache = Cache::with_settings(CacheSettings { cache_messages: false, ..CacheSettings::default() });
+        let cache = Cache::with_settings(CacheSettings {
+            cache_messages: false,
+            ..CacheSettings::default()
+        });
         cache.upsert_message(make_msg("ch5", "m1", "ignored"));
         assert_eq!(cache.message_count(), 0);
     }
 
     #[test]
     fn settings_accessor_returns_config() {
-        let settings = CacheSettings { max_messages: 42, cache_guilds: false, ..CacheSettings::default() };
+        let settings = CacheSettings {
+            max_messages: 42,
+            cache_guilds: false,
+            ..CacheSettings::default()
+        };
         let cache = Cache::with_settings(settings.clone());
         assert_eq!(cache.settings().max_messages, 42);
         assert!(!cache.settings().cache_guilds);
@@ -546,7 +590,10 @@ mod tests {
     #[test]
     fn ttl_expired_guild_returns_none_on_access() {
         // TTL of 0 ns — everything expires immediately.
-        let cache = Cache::with_settings(CacheSettings { time_to_live: Some(Duration::from_nanos(0)), ..CacheSettings::default() });
+        let cache = Cache::with_settings(CacheSettings {
+            time_to_live: Some(Duration::from_nanos(0)),
+            ..CacheSettings::default()
+        });
         cache.upsert_guild(make_guild("ttl1", "Expiring"));
         // Sleep 1 ms to guarantee elapsed > 0 ns
         std::thread::sleep(Duration::from_millis(1));
@@ -555,17 +602,29 @@ mod tests {
 
     #[test]
     fn ttl_expired_user_returns_none_on_access() {
-        let cache = Cache::with_settings(CacheSettings { time_to_live: Some(Duration::from_nanos(0)), ..CacheSettings::default() });
+        let cache = Cache::with_settings(CacheSettings {
+            time_to_live: Some(Duration::from_nanos(0)),
+            ..CacheSettings::default()
+        });
         cache.upsert_user(make_user("uttl1", "Expiring"));
         std::thread::sleep(Duration::from_millis(1));
-        assert!(cache.user("uttl1").is_none(), "user entry should have expired");
+        assert!(
+            cache.user("uttl1").is_none(),
+            "user entry should have expired"
+        );
     }
 
     #[test]
     fn no_ttl_entries_stay_indefinitely() {
-        let cache = Cache::with_settings(CacheSettings { time_to_live: None, ..CacheSettings::default() });
+        let cache = Cache::with_settings(CacheSettings {
+            time_to_live: None,
+            ..CacheSettings::default()
+        });
         cache.upsert_guild(make_guild("perm1", "Permanent"));
         std::thread::sleep(Duration::from_millis(1));
-        assert!(cache.guild("perm1").is_some(), "entry without TTL should persist");
+        assert!(
+            cache.guild("perm1").is_some(),
+            "entry without TTL should persist"
+        );
     }
 }

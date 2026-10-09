@@ -41,7 +41,10 @@ pub async fn run(ctx: &Ctx, guild: &str) -> Result<()> {
                 ]
             })
             .collect();
-        output::print_table(&["id", "name", "parent", "messages", "members", "archived"], &rows);
+        output::print_table(
+            &["id", "name", "parent", "messages", "members", "archived"],
+            &rows,
+        );
         output::dim(&format!("\n{} active threads", resp.threads.len()));
     }
     Ok(())

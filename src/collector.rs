@@ -89,16 +89,29 @@ impl MessageCollector {
         let subscription = events
             .on_event("MESSAGE_CREATE", move |ev| {
                 let data = &ev.data;
-                let a_ok = author_id.as_deref().map(|id| data["author"]["id"].as_str() == Some(id)).unwrap_or(true);
-                let c_ok = channel_id.as_deref().map(|id| data["channel_id"].as_str() == Some(id)).unwrap_or(true);
-                let g_ok = guild_id.as_deref().map(|id| data["guild_id"].as_str() == Some(id)).unwrap_or(true);
+                let a_ok = author_id
+                    .as_deref()
+                    .map(|id| data["author"]["id"].as_str() == Some(id))
+                    .unwrap_or(true);
+                let c_ok = channel_id
+                    .as_deref()
+                    .map(|id| data["channel_id"].as_str() == Some(id))
+                    .unwrap_or(true);
+                let g_ok = guild_id
+                    .as_deref()
+                    .map(|id| data["guild_id"].as_str() == Some(id))
+                    .unwrap_or(true);
                 if a_ok && c_ok && g_ok {
                     let _ = tx.try_send(ev.data.clone());
                 }
             })
             .await;
 
-        CollectorStream { rx, timeout, _subscription: subscription }
+        CollectorStream {
+            rx,
+            timeout,
+            _subscription: subscription,
+        }
     }
 }
 
@@ -149,16 +162,29 @@ impl ReactionCollector {
         let subscription = events
             .on_event("MESSAGE_REACTION_ADD", move |ev| {
                 let data = &ev.data;
-                let u_ok = user_id.as_deref().map(|id| data["user_id"].as_str() == Some(id)).unwrap_or(true);
-                let c_ok = channel_id.as_deref().map(|id| data["channel_id"].as_str() == Some(id)).unwrap_or(true);
-                let m_ok = message_id.as_deref().map(|id| data["message_id"].as_str() == Some(id)).unwrap_or(true);
+                let u_ok = user_id
+                    .as_deref()
+                    .map(|id| data["user_id"].as_str() == Some(id))
+                    .unwrap_or(true);
+                let c_ok = channel_id
+                    .as_deref()
+                    .map(|id| data["channel_id"].as_str() == Some(id))
+                    .unwrap_or(true);
+                let m_ok = message_id
+                    .as_deref()
+                    .map(|id| data["message_id"].as_str() == Some(id))
+                    .unwrap_or(true);
                 if u_ok && c_ok && m_ok {
                     let _ = tx.try_send(ev.data.clone());
                 }
             })
             .await;
 
-        CollectorStream { rx, timeout, _subscription: subscription }
+        CollectorStream {
+            rx,
+            timeout,
+            _subscription: subscription,
+        }
     }
 }
 
@@ -222,17 +248,40 @@ impl ComponentInteractionCollector {
                 if interaction_type != 3 && interaction_type != 5 {
                     return;
                 }
-                let u_ok = user_id.as_deref().map(|id| data["user"]["id"].as_str() == Some(id) || data["member"]["user"]["id"].as_str() == Some(id)).unwrap_or(true);
-                let c_ok = channel_id.as_deref().map(|id| data["channel_id"].as_str() == Some(id)).unwrap_or(true);
-                let m_ok = message_id.as_deref().map(|id| data["message"]["id"].as_str() == Some(id)).unwrap_or(true);
-                let cid_ok = if custom_ids.is_empty() { true } else { data["data"]["custom_id"].as_str().map(|cid| custom_ids.iter().any(|c| c == cid)).unwrap_or(false) };
+                let u_ok = user_id
+                    .as_deref()
+                    .map(|id| {
+                        data["user"]["id"].as_str() == Some(id)
+                            || data["member"]["user"]["id"].as_str() == Some(id)
+                    })
+                    .unwrap_or(true);
+                let c_ok = channel_id
+                    .as_deref()
+                    .map(|id| data["channel_id"].as_str() == Some(id))
+                    .unwrap_or(true);
+                let m_ok = message_id
+                    .as_deref()
+                    .map(|id| data["message"]["id"].as_str() == Some(id))
+                    .unwrap_or(true);
+                let cid_ok = if custom_ids.is_empty() {
+                    true
+                } else {
+                    data["data"]["custom_id"]
+                        .as_str()
+                        .map(|cid| custom_ids.iter().any(|c| c == cid))
+                        .unwrap_or(false)
+                };
                 if u_ok && c_ok && m_ok && cid_ok {
                     let _ = tx.try_send(ev.data.clone());
                 }
             })
             .await;
 
-        CollectorStream { rx, timeout, _subscription: subscription }
+        CollectorStream {
+            rx,
+            timeout,
+            _subscription: subscription,
+        }
     }
 }
 
@@ -281,7 +330,11 @@ mod tests {
     #[tokio::test]
     async fn message_collector_filters_author() {
         let emitter = EventEmitter::new();
-        let mut col = MessageCollector::new().author_id("user_a").timeout(Duration::from_millis(100)).build(emitter.clone()).await;
+        let mut col = MessageCollector::new()
+            .author_id("user_a")
+            .timeout(Duration::from_millis(100))
+            .build(emitter.clone())
+            .await;
 
         // Emit a non-matching message (different author)
         emitter
@@ -311,7 +364,10 @@ mod tests {
     #[tokio::test]
     async fn collector_stream_times_out() {
         let emitter = EventEmitter::new();
-        let mut col = MessageCollector::new().timeout(Duration::from_millis(10)).build(emitter.clone()).await;
+        let mut col = MessageCollector::new()
+            .timeout(Duration::from_millis(10))
+            .build(emitter.clone())
+            .await;
 
         // No events dispatched — should time out
         let result = col.next().await;

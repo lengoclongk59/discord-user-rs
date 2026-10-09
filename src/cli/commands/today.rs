@@ -34,7 +34,12 @@ pub fn run(ctx: &Ctx, channel: Option<&str>) -> Result<()> {
             current_channel = chan.to_string();
         }
         let time = m.timestamp.format("%H:%M:%S").to_string();
-        println!("  {} {}: {}", time, m.sender_name, m.content.replace('\n', " "));
+        println!(
+            "  {} {}: {}",
+            time,
+            m.sender_name,
+            m.content.replace('\n', " ")
+        );
     }
     output::dim(&format!("\n{} messages today", msgs.len()));
     Ok(())

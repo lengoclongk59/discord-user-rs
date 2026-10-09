@@ -56,7 +56,8 @@ pub fn validate_token(token: &str) -> Result<()> {
                 return Err(DiscordError::InvalidToken);
             }
             // Decode and check it looks like a snowflake (digits only)
-            match base64::Engine::decode(&base64::engine::general_purpose::STANDARD_NO_PAD, id_b64) {
+            match base64::Engine::decode(&base64::engine::general_purpose::STANDARD_NO_PAD, id_b64)
+            {
                 Ok(bytes) => {
                     let s = String::from_utf8(bytes).map_err(|_| DiscordError::InvalidToken)?;
                     if s.is_empty() || !s.chars().all(|c| c.is_ascii_digit()) {
@@ -77,7 +78,9 @@ pub fn validate_token(token: &str) -> Result<()> {
 /// Returns `true` if every character in `s` is a valid base64url or standard
 /// base64 character (letters, digits, `+`, `/`, `-`, `_`, `=`).
 fn is_base64url_like(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '-' | '_' | '='))
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '-' | '_' | '='))
 }
 
 #[cfg(test)]

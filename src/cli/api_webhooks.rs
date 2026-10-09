@@ -35,15 +35,18 @@ impl WriteApi {
     pub async fn webhook_delete(&self, webhook_id: &str) -> Result<()> {
         crate::cli::api::parse_snowflake(webhook_id)?;
         self.raw()
-            .delete(Route::Custom(
-                format!("webhooks/{}", webhook_id).into(),
-            ))
+            .delete(Route::Custom(format!("webhooks/{}", webhook_id).into()))
             .await
             .map_err(|e| anyhow!(e.to_string()))
     }
 
     /// Execute a webhook (fire and forget, no response body).
-    pub async fn webhook_execute(&self, webhook_id: &str, token: &str, content: &str) -> Result<()> {
+    pub async fn webhook_execute(
+        &self,
+        webhook_id: &str,
+        token: &str,
+        content: &str,
+    ) -> Result<()> {
         crate::cli::api::parse_snowflake(webhook_id)?;
         let body = json!({ "content": content });
         self.raw()

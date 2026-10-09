@@ -109,7 +109,10 @@ pub async fn dispatch(ctx: &Ctx, cmd: ThreadCmd) -> Result<()> {
             thread_type,
         } => {
             if ![60, 1440, 4320, 10080].contains(&auto_archive) {
-                return Err(anyhow::anyhow!("--auto-archive must be one of 60, 1440, 4320, 10080 (minutes); got {}", auto_archive));
+                return Err(anyhow::anyhow!(
+                    "--auto-archive must be one of 60, 1440, 4320, 10080 (minutes); got {}",
+                    auto_archive
+                ));
             }
             let type_id = match thread_type.to_ascii_lowercase().as_str() {
                 "public" => 11,
@@ -144,7 +147,10 @@ pub async fn dispatch(ctx: &Ctx, cmd: ThreadCmd) -> Result<()> {
             tags,
         } => {
             if ![60, 1440, 4320, 10080].contains(&auto_archive) {
-                return Err(anyhow::anyhow!("--auto-archive must be one of 60, 1440, 4320, 10080 (minutes); got {}", auto_archive));
+                return Err(anyhow::anyhow!(
+                    "--auto-archive must be one of 60, 1440, 4320, 10080 (minutes); got {}",
+                    auto_archive
+                ));
             }
             let v = api
                 .thread_create_forum_post(&channel, &name, &message, auto_archive, &tags)
@@ -167,7 +173,10 @@ pub async fn dispatch(ctx: &Ctx, cmd: ThreadCmd) -> Result<()> {
             auto_archive,
         } => {
             if ![60, 1440, 4320, 10080].contains(&auto_archive) {
-                return Err(anyhow::anyhow!("--auto-archive must be one of 60, 1440, 4320, 10080 (minutes); got {}", auto_archive));
+                return Err(anyhow::anyhow!(
+                    "--auto-archive must be one of 60, 1440, 4320, 10080 (minutes); got {}",
+                    auto_archive
+                ));
             }
             let v = api
                 .thread_create_from_message(&channel, &message, &name, auto_archive)

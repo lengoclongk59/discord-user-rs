@@ -11,7 +11,7 @@ pub async fn run(ctx: &Ctx, channel: &str, message: &str, unpin: bool) -> Result
     // Validate inputs before making any network requests
     parse_snowflake(channel)?;
     parse_snowflake(message)?;
-    
+
     let token = config::resolve_token(ctx.token_flag.clone())?;
     let api = WriteApi::new(&token);
 
@@ -29,7 +29,10 @@ pub async fn run(ctx: &Ctx, channel: &str, message: &str, unpin: bool) -> Result
             "message_id": message,
         }));
     } else {
-        output::success(&format!("{} message {} in channel {}", verb, message, channel));
+        output::success(&format!(
+            "{} message {} in channel {}",
+            verb, message, channel
+        ));
     }
     Ok(())
 }

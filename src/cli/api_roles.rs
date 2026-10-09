@@ -47,9 +47,7 @@ impl WriteApi {
     pub async fn role_list(&self, guild_id: &str) -> Result<Value> {
         crate::cli::api::parse_snowflake(guild_id)?;
         self.raw()
-            .get::<Value>(Route::Custom(
-                format!("guilds/{}/roles", guild_id).into(),
-            ))
+            .get::<Value>(Route::Custom(format!("guilds/{}/roles", guild_id).into()))
             .await
             .map_err(|e| anyhow!(e.to_string()))
     }
