@@ -9,7 +9,7 @@
 //!
 //! Sanctioned files:
 //! - `src/cli/api.rs`        — the `WriteApi` layer (the one place writes live)
-//! - `src/cli/auth/windows.rs` — `validate_token` uses raw reqwest pre-token
+//! - `src/cli/auth/mod.rs` — `validate_token` uses raw reqwest pre-token
 //!
 //! Only meaningful when the `cli` feature is on.
 
@@ -63,14 +63,14 @@ fn write_methods_confined_to_api_layer() {
         // Sanctioned files where raw write verbs are allowed:
         //  - cli/api.rs          : the core WriteApi layer
         //  - cli/api_*.rs        : per-domain WriteApi extension modules
-        //  - cli/auth/windows.rs : validate_token uses raw reqwest pre-token
+        //  - cli/auth/mod.rs     : validate_token uses raw reqwest pre-token
         let path_str = path.to_string_lossy().replace('\\', "/");
         let file_name = path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_default();
         if path_str.ends_with("cli/api.rs")
-            || path_str.ends_with("cli/auth/windows.rs")
+            || path_str.ends_with("cli/auth/mod.rs")
             || (path_str.contains("/cli/") && file_name.starts_with("api_"))
         {
             continue;

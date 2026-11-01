@@ -59,6 +59,7 @@ cli = [
     "dep:tempfile",
     "dep:tracing-subscriber",
     "dep:windows",
+    "dep:rusty-leveldb",
 ]
 
 ## Enable all optional features.
@@ -118,6 +119,9 @@ windows = { version = "0.58", features = [
     "Win32_Security_Cryptography",
     "Win32_System_Memory",
 ], optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rusty-leveldb = { version = "4", optional = true }
 
 # `tokio_unstable` is set by this repository's `.cargo/config.toml` (for
 # tokio-console) and gates the named-task path in `events.rs`; declaring it

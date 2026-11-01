@@ -28,10 +28,7 @@
 //! the format. The token values are present in raw SST/log files and the
 //! literal-prefix scan recovers them reliably across Discord versions.
 //!
-//! ⚠ This file is the SOLE sanctioned exception to the read-only HTTP
-//! invariant: `validate_token` uses raw `reqwest` directly because it must
-//! run *before* a token exists in the resolution chain. The
-//! `tests/readonly.rs` test allowlists this file specifically.
+//! Candidate validation is shared with Linux in the parent module.
 
 use std::path::{Path, PathBuf};
 use std::ptr;
@@ -45,19 +42,13 @@ use windows::Win32::Foundation::{LocalFree, HLOCAL};
 use windows::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB};
 use zeroize::Zeroizing;
 
-use super::DiscoveredToken;
+use super::{validate_token, DiscoveredToken};
 use crate::cli::config::looks_like_discord_token;
 
 const TOKEN_PREFIX: &[u8] = b"dQw4w9WgXcQ:";
 const BASE64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
 const DPAPI_PREFIX: &[u8] = b"DPAPI";
 const GCM_NONCE_LEN: usize = 12;
-
-#[derive(Debug, Deserialize)]
-struct MeMin {
-    username: String,
-    global_name: Option<String>,
-}
 
 pub async fn find_and_save_token() -> Result<DiscoveredToken> {
     let discord_dir = discord_app_dir().context("could not locate %APPDATA%\\Discord")?;
@@ -335,29 +326,6 @@ fn dpapi_decrypt(input: &[u8]) -> Result<Vec<u8>> {
         }
     }
     Ok(buf)
-}
-
-/// Sanctioned raw-reqwest exception: validate a candidate token directly,
-/// outside the `Api`/`ReadOnlyHttp` layer (which itself requires a token).
-async fn validate_token(token: &str) -> Result<MeMin> {
-    let client = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .timeout(std::time::Duration::from_secs(15))
-        // Never follow redirects: we send the bare user token in
-        // `Authorization`, and reqwest's default policy would replay it to
-        // any 30x `Location:` host.
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
-    let resp = client
-        .get("https://discord.com/api/v10/users/@me")
-        .header(reqwest::header::AUTHORIZATION, token)
-        .send()
-        .await?;
-    if !resp.status().is_success() {
-        return Err(anyhow!("HTTP {}", resp.status().as_u16()));
-    }
-    let me: MeMin = resp.json().await?;
-    Ok(me)
 }
 
 #[cfg(test)]

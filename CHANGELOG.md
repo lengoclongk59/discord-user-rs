@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added — CLI
+
+- Linux `auth` / `auth --save` discovers the active Discord desktop token from
+  a private LevelDB copy, including compressed records, and validates it via
+  Discord. Supports stable/PTB/Canary, XDG config, Flatpak and stable Snap.
+
+
 The REST client stops sending a request twice when the first attempt may
 already have been carried out, and its credential can be replaced while it is
 in use. Both were found auditing the crate as the transport of a dashboard
