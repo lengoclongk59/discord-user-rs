@@ -1,7 +1,4 @@
-//! Token auto-discovery (Windows DPAPI + LevelDB brute-force scan).
-//!
-//! On non-Windows platforms, `find_and_save_token` will fall back to platform-specific
-//! scanners without decryption.
+//! Platform-specific discovery of the local Discord desktop session.
 
 #[cfg(windows)]
 mod windows;
@@ -19,8 +16,7 @@ pub struct DiscoveredToken {
     pub username: String,
 }
 
-/// Scan local Discord storage, decrypt candidate tokens via DPAPI (Windows only), validate
-/// each via `GET /users/@me`, and return the first valid one.
+/// Discover and validate a local desktop token.
 #[cfg(windows)]
 pub async fn find_and_save_token() -> anyhow::Result<DiscoveredToken> {
     windows::find_and_save_token().await
@@ -42,4 +38,43 @@ pub async fn find_and_save_token() -> anyhow::Result<DiscoveredToken> {
         "auth --save is currently unsupported on this platform. \
          Please set $DISCORD_TOKEN or pass --token <T>."
     )
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+use serde::Deserialize;
+
+#[cfg(any(windows, target_os = "linux"))]
+#[derive(Debug, Deserialize)]
+struct MeMin {
+    username: String,
+    global_name: Option<String>,
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+/// Sanctioned raw-reqwest exception: validate a candidate token directly,
+/// outside the `Api`/`ReadOnlyHttp` layer (which itself requires a token).
+async fn validate_token(token: &str) -> anyhow::Result<MeMin> {
+    let platform = if cfg!(windows) {
+        "Windows NT 10.0; Win64; x64"
+    } else {
+        "X11; Linux x86_64"
+    };
+    let client = reqwest::Client::builder()
+        .user_agent(format!("Mozilla/5.0 ({platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"))
+        .timeout(std::time::Duration::from_secs(15))
+        // Never follow redirects: we send the bare user token in
+        // `Authorization`, and reqwest's default policy would replay it to
+        // any 30x `Location:` host.
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    let resp = client
+        .get("https://discord.com/api/v10/users/@me")
+        .header(reqwest::header::AUTHORIZATION, token)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(anyhow::anyhow!("HTTP {}", resp.status().as_u16()));
+    }
+    let me: MeMin = resp.json().await?;
+    Ok(me)
 }

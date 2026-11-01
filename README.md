@@ -172,6 +172,8 @@ discord search "deadline"      # query the archive, offline
 discord dc send <channel> "hello"
 ```
 
+On Linux, `auth` reads the active token from Discord stable, PTB, or Canary desktop Local Storage (including Flatpak and the stable Snap install). It respects `XDG_CONFIG_HOME`, opens a private temporary copy of LevelDB, and validates the token with Discord before optionally saving it. Browser profiles and encrypted token formats are not supported; use `DISCORD_TOKEN` or `--token` for those. If storage is changing during discovery, close Discord and retry.
+
 The token is resolved from `--token`, then `$DISCORD_TOKEN`, then `./.env` (current directory only — parent directories are deliberately not walked).
 
 The archive path is `--db`, then `$DISCORD_DB`, then `~/.discord/discord.db` (`%USERPROFILE%\.discord\discord.db` on Windows); the directory is created on first use, a leading `~` is expanded in either override, and a directory or archive the CLI creates itself is made owner-only (`0700`/`0600`) since it holds message bodies. `DISCORD_DB` is read from the environment only — unlike `DISCORD_TOKEN`, it is not picked up from `.env`. Versions up to 0.6.1 defaulted to `./discord.db`, relative to the working directory — the CLI warns when it finds a stranded `./discord.db`, so move it to the new location or set `$DISCORD_DB` to keep using it.
